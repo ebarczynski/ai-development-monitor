@@ -1,0 +1,79 @@
+{
+  "name": "ai-development-monitor",
+  "displayName": "AI Development Monitor",
+  "description": "Monitor and evaluate GitHub Copilot suggestions",
+  "version": "0.1.0",
+  "publisher": "local-publisher",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/username/ai-development-monitor.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ai-development-monitor.enable",
+        "title": "Enable AI Development Monitor"
+      },
+      {
+        "command": "ai-development-monitor.disable",
+        "title": "Disable AI Development Monitor"
+      },
+      {
+        "command": "ai-development-monitor.evaluateCopilotSuggestion",
+        "title": "Evaluate Current Copilot Suggestion"
+      },
+      {
+        "command": "ai-development-monitor.acceptSuggestion",
+        "title": "Accept Current Suggestion"
+      },
+      {
+        "command": "ai-development-monitor.rejectSuggestion",
+        "title": "Reject Current Suggestion"
+      }
+    ],
+    "configuration": {
+      "title": "AI Development Monitor",
+      "properties": {
+        "aiDevelopmentMonitor.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable or disable the AI Development Monitor"
+        },
+        "aiDevelopmentMonitor.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:5000",
+          "description": "URL of the AI Development Monitor API server"
+        },
+        "aiDevelopmentMonitor.autoEvaluate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically evaluate Copilot suggestions"
+        },
+        "aiDevelopmentMonitor.autoRetry": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically retry with 'Continue' on timeouts or errors"
+        },
+        "aiDevelopmentMonitor.retryInterval": {
+          "type": "number",
+          "default": 10000,
+          "description": "Interval in milliseconds before retrying with 'Continue'"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "package": "vsce package"
+  }
+}
