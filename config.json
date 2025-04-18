@@ -1,0 +1,7 @@
+{
+    "llm_api_endpoint": "http://localhost:11434",
+    "ollama_model": "gemma3",
+    "verification_threshold": 0.8,
+    "max_recursive_depth": 3,
+    "log_level": "DEBUG"
+}
