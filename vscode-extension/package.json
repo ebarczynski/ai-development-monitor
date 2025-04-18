@@ -2,7 +2,7 @@
   "name": "ai-development-monitor",
   "displayName": "AI Development Monitor",
   "description": "Monitor and evaluate GitHub Copilot suggestions",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "local-publisher",
   "license": "MIT",
   "repository": {
@@ -54,6 +54,16 @@
           "type": "string",
           "default": "http://localhost:5000",
           "description": "URL of the AI Development Monitor API server"
+        },
+        "aiDevelopmentMonitor.mcpUrl": {
+          "type": "string",
+          "default": "ws://localhost:5001/ws",
+          "description": "WebSocket URL of the AI Development Monitor MCP server"
+        },
+        "aiDevelopmentMonitor.useMcp": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use Model Context Protocol (MCP) for communication with the AI Development Monitor"
         },
         "aiDevelopmentMonitor.autoEvaluate": {
           "type": "boolean",
