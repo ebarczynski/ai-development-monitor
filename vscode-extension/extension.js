@@ -2,6 +2,7 @@
 const vscode = require('vscode');
 const https = require('https');
 const http = require('http');
+const MCPClient = require('./mcp_client');
 
 // Keep track of state
 let statusBarItem;
@@ -9,6 +10,7 @@ let monitorEnabled = true;
 let lastEvaluation = null;
 let retryTimeout = null;
 let connectionStatus = false;
+let mcpClient = null;
 
 /**
  * @param {vscode.ExtensionContext} context
@@ -44,8 +46,22 @@ async function activate(context) {
         statusBarItem
     );
     
-    // Try to connect to the AI Development Monitor API
-    await checkApiConnection();
+    // Initialize MCP client if enabled
+    if (config.get('useMcp', true)) {
+        mcpClient = new MCPClient();
+        try {
+            await mcpClient.connect();
+            connectionStatus = true;
+            console.log('Successfully connected to MCP server');
+        } catch (error) {
+            console.error('Failed to connect to MCP server:', error);
+            // Fall back to REST API
+            await checkApiConnection();
+        }
+    } else {
+        // Use REST API
+        await checkApiConnection();
+    }
     
     // Set up event listeners for Copilot
     setupCopilotListeners(context);
@@ -239,15 +255,59 @@ async function handleAutoContinuation() {
         return;
     }
     
-    // Check for errors or timeouts
-    // This is a simplified example - in a real implementation, 
-    // you would need to detect actual error states from Copilot
+    // For now, this is a simplified implementation
+    // In a real implementation, you would need to detect actual Copilot error states or timeouts
     
-    // For now, we'll just set up a command that can be triggered
-    // to simulate sending "Continue" to Copilot
+    // Example of detecting potential timeout or error state
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        return;
+    }
     
-    // In the future, this could be enhanced to detect actual Copilot
-    // error states and automatically submit a "Continue" prompt
+    // For demonstration, we'll just set up the capability to send "Continue" commands via MCP
+    // This could be triggered by a detection mechanism or by user action
+    
+    // Set up a command to send "Continue" via MCP
+    if (config.get('useMcp', true) && mcpClient && mcpClient.connected) {
+        // Check if a "Continue" command is registered for timeouts
+        if (retryTimeout) {
+            clearTimeout(retryTimeout);
+        }
+        
+        // Create a function to send "Continue" via MCP
+        const sendContinueViaMcp = async () => {
+            try {
+                const response = await mcpClient.sendContinue("Continue", true);
+                console.log('Sent "Continue" command via MCP');
+                
+                if (response && response.content && response.content.response) {
+                    vscode.window.showInformationMessage('AI responded to "Continue" command', 'View Response')
+                        .then(selection => {
+                            if (selection === 'View Response') {
+                                // Show the response in a document
+                                const newDocument = vscode.workspace.openTextDocument({
+                                    content: response.content.response,
+                                    language: 'markdown'
+                                }).then(doc => {
+                                    vscode.window.showTextDocument(doc);
+                                });
+                            }
+                        });
+                }
+            } catch (error) {
+                console.error('Error sending "Continue" via MCP:', error);
+            }
+        };
+        
+        // This is a placeholder for actual timeout detection
+        // In a real implementation, you would detect Copilot timeouts or errors
+        // and then trigger this function
+        
+        // For now, we'll just expose it as a command that can be triggered
+        context.subscriptions.push(
+            vscode.commands.registerCommand('ai-development-monitor.sendContinue', sendContinueViaMcp)
+        );
+    }
 }
 
 /**
@@ -263,9 +323,22 @@ async function evaluateCopilotSuggestion() {
         }
         
         // Check connection
-        if (!connectionStatus && !await checkApiConnection()) {
-            vscode.window.showErrorMessage('Cannot evaluate suggestion: AI Development Monitor is disconnected');
-            return;
+        if (!connectionStatus) {
+            const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
+            if (config.get('useMcp', true) && mcpClient) {
+                try {
+                    await mcpClient.connect();
+                    connectionStatus = true;
+                } catch (error) {
+                    if (!await checkApiConnection()) {
+                        vscode.window.showErrorMessage('Cannot evaluate suggestion: AI Development Monitor is disconnected');
+                        return;
+                    }
+                }
+            } else if (!await checkApiConnection()) {
+                vscode.window.showErrorMessage('Cannot evaluate suggestion: AI Development Monitor is disconnected');
+                return;
+            }
         }
         
         // Get current file content
@@ -297,24 +370,56 @@ async function evaluateCopilotSuggestion() {
             // Get task description (for now, use filename and language)
             const taskDescription = `Implement functionality in ${fileName} using ${fileType}`;
             
-            // Send to AI Development Monitor API
+            let response;
+            
+            // Use MCP if available, otherwise fall back to REST API
             const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
-            const apiUrl = config.get('apiUrl', 'http://localhost:5000');
-            
-            const response = await httpRequest(`${apiUrl}/evaluate`, 'POST', {
-                original_code: fullText,
-                proposed_changes: proposedChanges,
-                task_description: taskDescription
-            });
-            
-            lastEvaluation = response.data;
+            if (config.get('useMcp', true) && mcpClient && mcpClient.connected) {
+                // Send evaluation request via MCP
+                response = await mcpClient.evaluateSuggestion(
+                    fullText,
+                    proposedChanges,
+                    taskDescription,
+                    fileName,
+                    fileType
+                );
+                
+                // Format the response to match the REST API format for compatibility
+                lastEvaluation = {
+                    accept: response.content.accept,
+                    evaluation: {
+                        analysis: {
+                            hallucination_risk: response.content.hallucination_risk,
+                            recursive_risk: response.content.recursive_risk,
+                            alignment_score: response.content.alignment_score,
+                            issues_detected: response.content.issues_detected,
+                            recommendations: response.content.recommendations
+                        },
+                        reason: response.content.reason,
+                        proposed_changes: proposedChanges,
+                        original_code: fullText,
+                        task_description: taskDescription
+                    }
+                };
+            } else {
+                // Send to AI Development Monitor API using REST
+                const apiUrl = config.get('apiUrl', 'http://localhost:5000');
+                
+                const httpResponse = await httpRequest(`${apiUrl}/evaluate`, 'POST', {
+                    original_code: fullText,
+                    proposed_changes: proposedChanges,
+                    task_description: taskDescription
+                });
+                
+                lastEvaluation = httpResponse.data;
+            }
             
             // Show results
-            if (response.data.accept) {
+            if (lastEvaluation.accept) {
                 vscode.window.showInformationMessage('Suggestion ACCEPTED ✅', 'Details', 'Apply')
                     .then(selection => {
                         if (selection === 'Details') {
-                            showEvaluationDetails(response.data);
+                            showEvaluationDetails(lastEvaluation);
                         } else if (selection === 'Apply') {
                             acceptSuggestion();
                         }
@@ -323,7 +428,7 @@ async function evaluateCopilotSuggestion() {
                 vscode.window.showWarningMessage('Suggestion REJECTED ❌', 'Details', 'Apply Anyway')
                     .then(selection => {
                         if (selection === 'Details') {
-                            showEvaluationDetails(response.data);
+                            showEvaluationDetails(lastEvaluation);
                         } else if (selection === 'Apply Anyway') {
                             acceptSuggestion();
                         }
