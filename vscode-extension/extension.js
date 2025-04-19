@@ -3,6 +3,7 @@ const vscode = require('vscode');
 const https = require('https');
 const http = require('http');
 const MCPClient = require('./mcp_client');
+const Logger = require('./logger');
 
 // Keep track of state
 let statusBarItem;
@@ -16,7 +17,13 @@ let mcpClient = null;
  * @param {vscode.ExtensionContext} context
  */
 async function activate(context) {
-    console.log('AI Development Monitor is now active');
+    // Initialize logger with extension context
+    Logger.initialize(vscode, context, {
+        level: Logger.LOG_LEVEL.DEBUG,
+        logToOutputChannel: true
+    });
+    
+    Logger.info('AI Development Monitor is now active', 'system');
 
     // Create status bar item
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -32,6 +39,11 @@ async function activate(context) {
     const acceptCommand = vscode.commands.registerCommand('ai-development-monitor.acceptSuggestion', acceptSuggestion);
     const rejectCommand = vscode.commands.registerCommand('ai-development-monitor.rejectSuggestion', rejectSuggestion);
     
+    // Register debug command to show logs
+    const showLogsCommand = vscode.commands.registerCommand('ai-development-monitor.showLogs', () => {
+        Logger.show();
+    });
+    
     // Get configuration
     const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
     monitorEnabled = config.get('enabled', true);
@@ -43,23 +55,27 @@ async function activate(context) {
         evaluateCommand,
         acceptCommand,
         rejectCommand,
+        showLogsCommand,
         statusBarItem
     );
     
     // Initialize MCP client if enabled
     if (config.get('useMcp', true)) {
+        Logger.info('Initializing MCP client', 'mcp');
         mcpClient = new MCPClient();
         try {
             await mcpClient.connect();
             connectionStatus = true;
-            console.log('Successfully connected to MCP server');
+            Logger.info('Successfully connected to MCP server', 'mcp');
         } catch (error) {
-            console.error('Failed to connect to MCP server:', error);
+            Logger.error('Failed to connect to MCP server', error, 'mcp');
+            vscode.window.showWarningMessage('Failed to connect to MCP server. Falling back to REST API.');
             // Fall back to REST API
             await checkApiConnection();
         }
     } else {
         // Use REST API
+        Logger.info('MCP disabled, using REST API', 'api');
         await checkApiConnection();
     }
     
@@ -209,38 +225,94 @@ function setupCopilotListeners(context) {
     // Listen for inline suggestion events
     // This requires accessing internal Copilot APIs which may change over time
     
+    Logger.info('Setting up GitHub Copilot listeners', 'copilot');
+    
     // First, check if Copilot is installed
     const copilotExtension = vscode.extensions.getExtension('GitHub.copilot');
     if (!copilotExtension) {
+        Logger.warn('GitHub Copilot extension not found. AI Development Monitor requires Copilot to function.', 'copilot');
         vscode.window.showWarningMessage('GitHub Copilot extension not found. AI Development Monitor requires Copilot to function.');
         return;
     }
     
-    // Set up API polling to check for suggestions
+    Logger.info('GitHub Copilot extension found', 'copilot');
+    
+    // Try to access Copilot API (this is experimental and may not work consistently)
+    try {
+        if (copilotExtension.isActive) {
+            Logger.debug('Copilot extension is already active', 'copilot');
+            setupCopilotApi(copilotExtension.exports);
+        } else {
+            Logger.debug('Activating Copilot extension', 'copilot');
+            copilotExtension.activate().then(exports => {
+                setupCopilotApi(exports);
+            }).catch(err => {
+                Logger.error('Failed to activate Copilot extension', err, 'copilot');
+            });
+        }
+    } catch (error) {
+        Logger.error('Error accessing Copilot API', error, 'copilot');
+    }
+    
+    // Set up API polling to check for suggestions as fallback
+    Logger.info('Setting up suggestion polling as fallback', 'copilot');
     const suggestionCheckInterval = setInterval(async () => {
         if (!monitorEnabled || !connectionStatus) {
             return;
         }
         
-        // Check if there's an active suggestion
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-            return;
+        try {
+            // Check for visual indicators of active suggestions
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) {
+                return;
+            }
+            
+            // Check for Copilot's ghost text decorations
+            // This is a heuristic approach that might not always work
+            const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
+            if (config.get('autoEvaluate', true)) {
+                // Look for changes in the document that might indicate a suggestion
+                // For now, this just serves as a placeholder for more sophisticated detection
+                Logger.trace('Checking for Copilot suggestions', 'copilot');
+            }
+            
+            // Auto-continuation for errors or timeouts
+            handleAutoContinuation();
+        } catch (error) {
+            Logger.error('Error in suggestion polling', error, 'copilot');
         }
-        
-        // Since we can't directly access Copilot's suggestions, we'll need to:
-        // 1. Get the current document and editor state
-        // 2. Check if there might be an active suggestion
-        // 3. If there is, analyze the text and context
-        
-        // For demo purposes, we'll use keyboard shortcuts to trigger evaluation
-        // rather than trying to hook directly into Copilot's internals
-        
-        // Auto-continuation for errors or timeouts
-        handleAutoContinuation();
     }, 1000);
     
     context.subscriptions.push({ dispose: () => clearInterval(suggestionCheckInterval) });
+}
+
+/**
+ * Set up access to GitHub Copilot API if available
+ * Note: This relies on internal Copilot APIs which may change or be restricted
+ */
+function setupCopilotApi(copilotExports) {
+    Logger.info('Setting up Copilot API integration', 'copilot');
+    
+    try {
+        // Check if the Copilot exports contain any usable APIs
+        if (!copilotExports) {
+            Logger.warn('No accessible Copilot API found', 'copilot');
+            return;
+        }
+        
+        // Log available Copilot exports (for debugging)
+        Logger.debug('Available Copilot exports: ' + Object.keys(copilotExports).join(', '), 'copilot');
+        
+        // Try to access suggestion related APIs
+        // Note: This is experimental and may not work as Copilot's API is not public
+        
+        // The specific implementation will depend on the current structure of Copilot's API
+        // For now, this serves as a placeholder for when we discover more stable integration points
+        Logger.info('Registered with Copilot API hooks', 'copilot');
+    } catch (error) {
+        Logger.error('Failed to set up Copilot API integration', error, 'copilot');
+    }
 }
 
 /**
@@ -315,9 +387,12 @@ async function handleAutoContinuation() {
  */
 async function evaluateCopilotSuggestion() {
     try {
+        Logger.info('Starting evaluation of Copilot suggestion', 'evaluation');
+        
         // Get the active editor
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
+            Logger.warn('No active editor when attempting to evaluate suggestion', 'evaluation');
             vscode.window.showInformationMessage('No active editor');
             return;
         }
@@ -326,16 +401,21 @@ async function evaluateCopilotSuggestion() {
         if (!connectionStatus) {
             const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
             if (config.get('useMcp', true) && mcpClient) {
+                Logger.info('Attempting to reconnect to MCP server', 'mcp');
                 try {
                     await mcpClient.connect();
                     connectionStatus = true;
+                    Logger.info('Successfully reconnected to MCP server', 'mcp');
                 } catch (error) {
+                    Logger.error('Failed to reconnect to MCP server', error, 'mcp');
                     if (!await checkApiConnection()) {
+                        Logger.error('Cannot evaluate suggestion: All connection methods failed', null, 'evaluation');
                         vscode.window.showErrorMessage('Cannot evaluate suggestion: AI Development Monitor is disconnected');
                         return;
                     }
                 }
             } else if (!await checkApiConnection()) {
+                Logger.error('Cannot evaluate suggestion: REST API connection failed', null, 'evaluation');
                 vscode.window.showErrorMessage('Cannot evaluate suggestion: AI Development Monitor is disconnected');
                 return;
             }
@@ -353,9 +433,14 @@ async function evaluateCopilotSuggestion() {
             document.getText(selection);
         
         if (!proposedChanges) {
+            Logger.warn('No text selected or in clipboard to evaluate', 'evaluation');
             vscode.window.showInformationMessage('No text selected or in clipboard to evaluate');
             return;
         }
+        
+        Logger.debug('Evaluating code suggestion', 'evaluation');
+        Logger.debug(`Original code length: ${fullText.length} characters`, 'evaluation');
+        Logger.debug(`Proposed changes length: ${proposedChanges.length} characters`, 'evaluation');
         
         // Show progress notification
         vscode.window.withProgress({
@@ -375,46 +460,80 @@ async function evaluateCopilotSuggestion() {
             // Use MCP if available, otherwise fall back to REST API
             const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
             if (config.get('useMcp', true) && mcpClient && mcpClient.connected) {
-                // Send evaluation request via MCP
-                response = await mcpClient.evaluateSuggestion(
-                    fullText,
-                    proposedChanges,
-                    taskDescription,
-                    fileName,
-                    fileType
-                );
+                Logger.info('Sending evaluation request via MCP', 'mcp');
                 
-                // Format the response to match the REST API format for compatibility
-                lastEvaluation = {
-                    accept: response.content.accept,
-                    evaluation: {
-                        analysis: {
-                            hallucination_risk: response.content.hallucination_risk,
-                            recursive_risk: response.content.recursive_risk,
-                            alignment_score: response.content.alignment_score,
-                            issues_detected: response.content.issues_detected,
-                            recommendations: response.content.recommendations
-                        },
-                        reason: response.content.reason,
-                        proposed_changes: proposedChanges,
-                        original_code: fullText,
-                        task_description: taskDescription
-                    }
-                };
+                // Send evaluation request via MCP
+                try {
+                    response = await mcpClient.evaluateSuggestion(
+                        fullText,
+                        proposedChanges,
+                        taskDescription,
+                        fileName,
+                        fileType
+                    );
+                    
+                    Logger.debug('Received MCP evaluation response', 'mcp');
+                    Logger.logObject('DEBUG', 'MCP Response', response, 'mcp');
+                    
+                    // Format the response to match the REST API format for compatibility
+                    lastEvaluation = {
+                        accept: response.content.accept,
+                        evaluation: {
+                            analysis: {
+                                hallucination_risk: response.content.hallucination_risk,
+                                recursive_risk: response.content.recursive_risk,
+                                alignment_score: response.content.alignment_score,
+                                issues_detected: response.content.issues_detected,
+                                recommendations: response.content.recommendations
+                            },
+                            reason: response.content.reason,
+                            proposed_changes: proposedChanges,
+                            original_code: fullText,
+                            task_description: taskDescription
+                        }
+                    };
+                } catch (error) {
+                    Logger.error('Error during MCP evaluation', error, 'mcp');
+                    vscode.window.showErrorMessage(`Error evaluating with MCP: ${error.message}. Falling back to REST API.`);
+                    
+                    // Fall back to REST API
+                    await useFallbackRestApi();
+                }
             } else {
                 // Send to AI Development Monitor API using REST
+                await useFallbackRestApi();
+            }
+            
+            // Helper function for REST API fallback
+            async function useFallbackRestApi() {
+                Logger.info('Using REST API fallback for evaluation', 'api');
                 const apiUrl = config.get('apiUrl', 'http://localhost:5000');
                 
-                const httpResponse = await httpRequest(`${apiUrl}/evaluate`, 'POST', {
-                    original_code: fullText,
-                    proposed_changes: proposedChanges,
-                    task_description: taskDescription
-                });
-                
-                lastEvaluation = httpResponse.data;
+                try {
+                    const httpResponse = await httpRequest(`${apiUrl}/evaluate`, 'POST', {
+                        original_code: fullText,
+                        proposed_changes: proposedChanges,
+                        task_description: taskDescription
+                    });
+                    
+                    Logger.debug('Received REST API evaluation response', 'api');
+                    Logger.logObject('DEBUG', 'REST API Response', httpResponse, 'api');
+                    
+                    lastEvaluation = httpResponse.data;
+                } catch (error) {
+                    Logger.error('Error during REST API evaluation', error, 'api');
+                    vscode.window.showErrorMessage(`Error evaluating with REST API: ${error.message}`);
+                    throw error; // Re-throw to exit the process
+                }
             }
             
             // Show results
+            Logger.info(`Evaluation result: ${lastEvaluation.accept ? 'ACCEPTED' : 'REJECTED'}`, 'evaluation');
+            Logger.debug('Evaluation details:', 'evaluation');
+            Logger.debug(`- Hallucination risk: ${lastEvaluation.evaluation.analysis.hallucination_risk}`, 'evaluation');
+            Logger.debug(`- Recursive risk: ${lastEvaluation.evaluation.analysis.recursive_risk}`, 'evaluation');
+            Logger.debug(`- Alignment score: ${lastEvaluation.evaluation.analysis.alignment_score}`, 'evaluation');
+            
             if (lastEvaluation.accept) {
                 vscode.window.showInformationMessage('Suggestion ACCEPTED ✅', 'Details', 'Apply')
                     .then(selection => {
@@ -436,7 +555,7 @@ async function evaluateCopilotSuggestion() {
             }
         });
     } catch (error) {
-        console.error('Error evaluating suggestion:', error);
+        Logger.error('Error evaluating suggestion', error, 'evaluation');
         vscode.window.showErrorMessage(`Error evaluating suggestion: ${error.message}`);
     }
 }

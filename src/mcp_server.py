@@ -11,6 +11,7 @@ import asyncio
 from typing import Dict, List, Any, Optional, Union
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 from pydantic import BaseModel, Field
 
@@ -19,6 +20,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.monitor_agent import DevelopmentMonitorAgent
+from src.web_interface import add_to_logs, setup_web_interface, get_html_interface
 
 # Configure logging
 logging.basicConfig(
@@ -89,6 +91,12 @@ class MCPMessage(BaseModel):
 @app.get("/")
 async def root():
     """Root endpoint"""
+    return {"message": "AI Development Monitor MCP Server", 
+            "note": "For the web interface with communication logs, please visit http://localhost:5002"}
+
+@app.get("/api/simple")
+async def simple_status():
+    """Simple status endpoint for API checks"""
     return {"message": "AI Development Monitor MCP Server"}
 
 @app.get("/status")
@@ -134,10 +142,10 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         
         # Connect to LLM
         if not agent.connect_llm():
-            await websocket.send_text(json.dumps({
-                "error": "Failed to connect to LLM",
-                "message_type": "error"
-            }))
+            error_msg = {"error": "Failed to connect to LLM", "message_type": "error"}
+            # Log outgoing error message
+            add_to_logs("outgoing", "error", error_msg)
+            await websocket.send_text(json.dumps(error_msg))
             await websocket.close()
             return
     
@@ -153,30 +161,36 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 message_data = json.loads(data)
                 message = MCPMessage(**message_data)
                 
+                # Log incoming message
+                add_to_logs("incoming", message.message_type, message_data)
+                
                 # Process message based on type
                 if message.message_type == "suggestion":
                     await handle_suggestion(message, websocket)
                 elif message.message_type == "continue":
                     await handle_continue(message, websocket)
                 else:
-                    await websocket.send_text(json.dumps({
+                    error_msg = {
                         "error": f"Unsupported message type: {message.message_type}",
                         "message_type": "error",
                         "context": message.context.dict()
-                    }))
+                    }
+                    # Log outgoing error message
+                    add_to_logs("outgoing", "error", error_msg)
+                    await websocket.send_text(json.dumps(error_msg))
             
             except json.JSONDecodeError:
-                await websocket.send_text(json.dumps({
-                    "error": "Invalid JSON message",
-                    "message_type": "error"
-                }))
+                error_msg = {"error": "Invalid JSON message", "message_type": "error"}
+                # Log outgoing error message
+                add_to_logs("outgoing", "error", error_msg)
+                await websocket.send_text(json.dumps(error_msg))
             
             except Exception as e:
                 logger.error(f"Error processing message: {e}")
-                await websocket.send_text(json.dumps({
-                    "error": f"Error processing message: {str(e)}",
-                    "message_type": "error"
-                }))
+                error_msg = {"error": f"Error processing message: {str(e)}", "message_type": "error"}
+                # Log outgoing error message
+                add_to_logs("outgoing", "error", error_msg)
+                await websocket.send_text(json.dumps(error_msg))
     
     except WebSocketDisconnect:
         # Remove connection when client disconnects
@@ -190,9 +204,19 @@ async def handle_suggestion(message: MCPMessage, websocket: WebSocket):
     
     # Extract suggestion data
     suggestion = message.content
-    original_code = suggestion.get("original_code", "")
-    proposed_changes = suggestion.get("proposed_changes", "")
-    task_description = suggestion.get("task_description", "Implement functionality")
+    
+    # Check if content is a dict or a Pydantic model
+    if hasattr(suggestion, "__dict__"):
+        # It's a Pydantic model
+        suggestion_dict = suggestion.dict() if hasattr(suggestion, "dict") else suggestion.__dict__
+        original_code = suggestion_dict.get("original_code", "")
+        proposed_changes = suggestion_dict.get("proposed_changes", "")
+        task_description = suggestion_dict.get("task_description", "Implement functionality")
+    else:
+        # It's a dict
+        original_code = suggestion.get("original_code", "")
+        proposed_changes = suggestion.get("proposed_changes", "")
+        task_description = suggestion.get("task_description", "Implement functionality")
     
     # Evaluate the changes
     accept, evaluation = agent.evaluate_proposed_changes(
@@ -217,6 +241,9 @@ async def handle_suggestion(message: MCPMessage, websocket: WebSocket):
         }
     }
     
+    # Log outgoing evaluation
+    add_to_logs("outgoing", "evaluation", response["content"])
+    
     # Send response
     await websocket.send_text(json.dumps(response))
 
@@ -226,7 +253,15 @@ async def handle_continue(message: MCPMessage, websocket: WebSocket):
     
     # Extract continue data
     continue_request = message.content
-    prompt = continue_request.get("prompt", "Continue")
+    
+    # Check if content is a dict or a Pydantic model
+    if hasattr(continue_request, "__dict__"):
+        # It's a Pydantic model
+        continue_dict = continue_request.dict() if hasattr(continue_request, "dict") else continue_request.__dict__
+        prompt = continue_dict.get("prompt", "Continue")
+    else:
+        # It's a dict
+        prompt = continue_request.get("prompt", "Continue")
     
     # Send to LLM for continuation
     llm_response = agent.send_prompt_to_llm(prompt)
@@ -241,6 +276,9 @@ async def handle_continue(message: MCPMessage, websocket: WebSocket):
             "model": llm_response.get("model", "")
         }
     }
+    
+    # Log outgoing continuation
+    add_to_logs("outgoing", "continuation", response["content"])
     
     # Send response
     await websocket.send_text(json.dumps(response))
@@ -266,9 +304,19 @@ async def handle_http_message(message: Dict[str, Any] = Body(...)):
         if mcp_message.message_type == "suggestion":
             # Extract suggestion data
             suggestion = mcp_message.content
-            original_code = suggestion.get("original_code", "")
-            proposed_changes = suggestion.get("proposed_changes", "")
-            task_description = suggestion.get("task_description", "Implement functionality")
+            
+            # Check if content is a dict or a Pydantic model
+            if hasattr(suggestion, "__dict__"):
+                # It's a Pydantic model
+                suggestion_dict = suggestion.dict() if hasattr(suggestion, "dict") else suggestion.__dict__
+                original_code = suggestion_dict.get("original_code", "")
+                proposed_changes = suggestion_dict.get("proposed_changes", "")
+                task_description = suggestion_dict.get("task_description", "Implement functionality")
+            else:
+                # It's a dict
+                original_code = suggestion.get("original_code", "")
+                proposed_changes = suggestion.get("proposed_changes", "")
+                task_description = suggestion.get("task_description", "Implement functionality")
             
             # Evaluate the changes
             accept, evaluation = agent.evaluate_proposed_changes(
@@ -336,6 +384,9 @@ def run_server(host: str = '0.0.0.0', port: int = 5001):
         logger.info("Successfully connected to LLM")
     else:
         logger.warning("Failed to connect to LLM. Will attempt connection when requested via API")
+    
+    # Set up web interface
+    setup_web_interface(app)
     
     # Start the server
     logger.info(f"Starting MCP server on {host}:{port}")

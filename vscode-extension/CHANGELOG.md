@@ -2,7 +2,20 @@
 
 All notable changes to the "AI Development Monitor" extension will be documented in this file.
 
-## [1.0.1] - 2025-04-19
+## [0.2.0] - 2025-04-19
+
+- Add improved Copilot integration with better suggestion detection
+- Implement robust MCP client with reconnection logic and error handling
+- Add comprehensive logging system with multiple log levels and categories
+- Add heartbeat mechanism to detect and recover from dead connections
+- Implement message timeout handling to prevent hanging requests
+- Create dedicated CopilotIntegration module for more reliable suggestion detection
+- Add automatic retries with exponential backoff for connection failures
+- Improve error reporting with detailed user notifications
+- Add manual evaluation fallback when automatic detection doesn't work
+- Add "Show Logs" command for easier debugging
+
+## [0.1.1] - 2025-04-19
 
 - Add Model Context Protocol (MCP) integration for AI-to-AI communication
 - Implement WebSocket connection for real-time bidirectional messaging
