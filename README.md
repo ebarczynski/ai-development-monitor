@@ -1,4 +1,6 @@
+![aidm-hydra](https://github.com/user-attachments/assets/941e7ca2-9e84-4e06-9110-b0b7af453d3f)
 # AI Development Monitor
+
 
 A comprehensive system for monitoring and evaluating GitHub Copilot code suggestions to detect potential hallucinations, recursive behaviors, and other issues. This project consists of several components that work together to provide a seamless development experience with AI code assistants.
 
