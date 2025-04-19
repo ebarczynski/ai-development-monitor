@@ -1,0 +1,122 @@
+MCP Client Test Log - 2025-04-19 03:50:23.008802
+--------------------------------------------------------------------------------
+
+
+=== Testing MCP Server HTTP Endpoints ===
+Time: 2025-04-19 03:50:23.008918
+Root endpoint response: 200
+Content: {"message":"AI Development Monitor MCP Server","note":"For the web interface with communication logs, please visit http://localhost:5002"}
+Status endpoint response: 200
+Content: {"status":"running","agent_connected":true,"active_connections":0}
+Server status: running
+Agent connected: True
+Active connections: 0
+
+Sending HTTP message to evaluate code:
+{
+  "context": {
+    "conversation_id": "test-http-conversation",
+    "message_id": "test-http-message",
+    "parent_id": null,
+    "metadata": {}
+  },
+  "message_type": "suggestion",
+  "content": {
+    "original_code": "def hello():\n    pass",
+    "proposed_changes": "def hello():\n    print('Hello, world!')",
+    "task_description": "Implement a function that prints a greeting",
+    "file_path": "test.py",
+    "language": "python"
+  }
+}
+Response status: 200
+Response content:
+{
+  "message_type": "evaluation",
+  "context": {
+    "conversation_id": "test-http-conversation",
+    "message_id": "test-http-message",
+    "parent_id": null,
+    "metadata": {}
+  },
+  "content": {
+    "accept": true,
+    "hallucination_risk": 0.0,
+    "recursive_risk": 0.0,
+    "alignment_score": 1.0,
+    "issues_detected": [],
+    "recommendations": [],
+    "reason": "Automated evaluation based on analysis results"
+  }
+}
+
+=== Testing MCP Server WebSocket Connection ===
+Time: 2025-04-19 03:50:29.090737
+Connecting to: ws://localhost:5001/ws/test-client-b3ce3313-d46e-49f5-8b44-4b1ce71c3ca7
+WebSocket connection established!
+
+Sending WebSocket message:
+{
+  "context": {
+    "conversation_id": "8e5d5f22-76f6-422f-88e7-19c443e1ae06",
+    "message_id": "d3680227-6e5c-4879-92e2-5f033d5b98db",
+    "parent_id": null,
+    "metadata": {}
+  },
+  "message_type": "suggestion",
+  "content": {
+    "original_code": "def factorial(n):\n    pass",
+    "proposed_changes": "def factorial(n):\n    if n <= 1:\n        return 1\n    return n * factorial(n-1)",
+    "task_description": "Implement a factorial function",
+    "file_path": "example.py",
+    "language": "python"
+  }
+}
+Message sent, waiting for response...
+
+Received response:
+{
+  "message_type": "evaluation",
+  "context": {
+    "conversation_id": "8e5d5f22-76f6-422f-88e7-19c443e1ae06",
+    "message_id": "d3680227-6e5c-4879-92e2-5f033d5b98db",
+    "parent_id": null,
+    "metadata": {}
+  },
+  "content": {
+    "accept": false,
+    "hallucination_risk": 0.0,
+    "recursive_risk": 1.0,
+    "alignment_score": 0.9,
+    "issues_detected": [
+      "The provided factorial function is recursive and does not include a base case or a mechanism to stop the recursion. Without a stopping condition, it will result in a stack overflow error for non-negative integer inputs.",
+      "The code is functionally correct for non-negative integers, but the recursive implementation is generally less efficient and more prone to errors than an iterative approach."
+    ],
+    "recommendations": [
+      "Add a stopping condition to the recursive function, typically through a `while` loop and a counter, to ensure it terminates.",
+      "Consider implementing an iterative solution for the factorial function to improve performance and avoid potential stack overflow errors.",
+      "Include a docstring explaining the function's purpose, arguments, and return value."
+    ],
+    "reason": "Automated evaluation based on analysis results"
+  }
+}
+
+Evaluation Results:
+Accept: False
+Hallucination Risk: 0.0
+Recursive Risk: 1.0
+Alignment Score: 0.9
+
+Issues Detected:
+- The provided factorial function is recursive and does not include a base case or a mechanism to stop the recursion. Without a stopping condition, it will result in a stack overflow error for non-negative integer inputs.
+- The code is functionally correct for non-negative integers, but the recursive implementation is generally less efficient and more prone to errors than an iterative approach.
+
+Recommendations:
+- Add a stopping condition to the recursive function, typically through a `while` loop and a counter, to ensure it terminates.
+- Consider implementing an iterative solution for the factorial function to improve performance and avoid potential stack overflow errors.
+- Include a docstring explaining the function's purpose, arguments, and return value.
+
+WebSocket test completed
+
+=== All tests completed ===
+See full log at: /home/luxoft/snake_cpp/agent/mcp_client_log.txt

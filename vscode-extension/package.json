@@ -87,7 +87,6 @@
     "package": "vsce package"
   },
   "dependencies": {
-    "ws": "^8.13.0",
-    "crypto": "^1.0.1"
+    "ws": "^8.18.1"
   }
 }

@@ -1,7 +1,6 @@
 // MCP Client implementation for AI Development Monitor extension
 const vscode = require('vscode');
 const WebSocket = require('ws');
-const crypto = require('crypto');
 const Logger = require('./logger');
 
 class MCPClient {
