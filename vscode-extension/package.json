@@ -2,7 +2,7 @@
   "name": "ai-development-monitor",
   "displayName": "AI Development Monitor",
   "description": "Monitor and evaluate GitHub Copilot suggestions",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "local-publisher",
   "license": "MIT",
   "repository": {
@@ -23,23 +23,27 @@
     "commands": [
       {
         "command": "ai-development-monitor.enable",
-        "title": "Enable AI Development Monitor"
+        "title": "AI Dev: Enable AI Development Monitor"
       },
       {
         "command": "ai-development-monitor.disable",
-        "title": "Disable AI Development Monitor"
+        "title": "AI Dev: Disable AI Development Monitor"
       },
       {
         "command": "ai-development-monitor.evaluateCopilotSuggestion",
-        "title": "Evaluate Current Copilot Suggestion"
+        "title": "AI Dev: Evaluate Current Copilot Suggestion"
       },
       {
         "command": "ai-development-monitor.acceptSuggestion",
-        "title": "Accept Current Suggestion"
+        "title": "AI Dev: Accept Current Suggestion"
       },
       {
         "command": "ai-development-monitor.rejectSuggestion",
-        "title": "Reject Current Suggestion"
+        "title": "AI Dev: Reject Current Suggestion"
+      },
+      {
+        "command": "ai-development-monitor.runDiagnosticTest",
+        "title": "AI Dev: Run Diagnostic Test"
       }
     ],
     "configuration": {

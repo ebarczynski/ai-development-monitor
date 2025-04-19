@@ -2,6 +2,15 @@
 
 All notable changes to the "AI Development Monitor" extension will be documented in this file.
 
+## [0.3.0] - 2025-04-19
+
+- Fix VS Code dependencies packaging with improved .vscodeignore configuration
+- Add copilot_handlers.js for proper integration between Copilot detection and MCP communication
+- Fix namespace and module import issues in the MCP integration
+- Improve log management system with more reliable communication
+- Add proper error handling for WebSocket connections
+- Enhance suggestion detection reliability
+
 ## [0.2.0] - 2025-04-19
 
 - Add improved Copilot integration with better suggestion detection

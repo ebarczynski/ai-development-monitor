@@ -6,3 +6,5 @@ venv/**
 .vscode
 __pycache__/
 node_modules/
+mcp_client_log.txt
+mcp_logs.json

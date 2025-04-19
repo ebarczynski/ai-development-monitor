@@ -2,6 +2,21 @@
 
 All notable changes to the Python components of the AI Development Monitor will be documented in this file.
 
+## [0.3.0] - 2025-04-19
+
+### Added
+- Implemented class-based log management system for better memory management
+- Added robust error handling for file system operations
+- Enhanced web interface with "Reload from File" functionality
+- Improved debugging capabilities with detailed log output
+- Added proper namespace handling for module imports
+
+### Fixed
+- Fixed log persistence issues between server restarts
+- Resolved namespace conflicts in communication_logs variable
+- Fixed module import and initialization sequence
+- Corrected handling of WebSocket message processing
+
 ## [0.2.0] - 2025-04-19
 
 ### Added

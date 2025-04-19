@@ -4,12 +4,12 @@ A comprehensive system for monitoring and evaluating GitHub Copilot code suggest
 
 ## Components
 
-### 1. Python Backend (v0.2.0)
+### 1. Python Backend (v0.3.0)
 - **MCP Server**: Model Context Protocol server for structured AI-to-AI communication
 - **Web Interface**: Beautiful visualization of communication logs
 - **Monitor Agent**: Intelligent evaluation of code suggestions using LLM
 
-### 2. VS Code Extension (v0.2.0)
+### 2. VS Code Extension (v0.3.0)
 - **Copilot Integration**: Captures and monitors GitHub Copilot suggestions
 - **MCP Client**: Communicates with the MCP server via WebSockets
 - **Evaluation UI**: Shows risk scores and recommendations in VS Code
@@ -21,6 +21,7 @@ A comprehensive system for monitoring and evaluating GitHub Copilot code suggest
 - Node.js 16 or higher
 - VS Code 1.85.0 or higher
 - GitHub Copilot extension
+- Ollama running in the background (for LLM-based code evaluation)
 
 ### Installation
 

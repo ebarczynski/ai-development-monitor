@@ -13,73 +13,109 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-# Message log to store communication history
-communication_logs = []
-MAX_LOGS = 100  # Maximum number of logs to keep
-LOG_FILE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mcp_logs.json")
+# Use a class to manage logs instead of global variables
+class LogManager:
+    def __init__(self):
+        self.logs = []
+        self.max_logs = 100
+        self.log_file_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mcp_logs.json")
+        # Load logs on initialization
+        self.load_logs_from_file()
+    
+    def save_logs_to_file(self):
+        """Save communication logs to a file for sharing between servers"""
+        try:
+            with open(self.log_file_path, 'w') as f:
+                json.dump(self.logs, f)
+        except Exception as e:
+            print(f"Error saving logs to file: {e}")
+    
+    def load_logs_from_file(self):
+        """Load communication logs from file"""
+        try:
+            if os.path.exists(self.log_file_path):
+                print(f"Found log file at {self.log_file_path}")
+                with open(self.log_file_path, 'r') as f:
+                    loaded_logs = json.load(f)
+                    print(f"Loaded {len(loaded_logs)} logs from file")
+                    if isinstance(loaded_logs, list):
+                        self.logs = loaded_logs
+                        print(f"Updated logs, now has {len(self.logs)} entries")
+                    else:
+                        print(f"Loaded data is not a list: {type(loaded_logs)}")
+            else:
+                print(f"Log file not found at {self.log_file_path}")
+        except Exception as e:
+            print(f"Error loading logs from file: {e}")
+    
+    def add_to_logs(self, direction: str, message_type: str, content: Any):
+        """Add a message to the communication logs"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        
+        # Determine emoticon based on message type and direction
+        emoticon = "📝"  # Default
+        if direction == "incoming":
+            if message_type == "suggestion":
+                emoticon = "💡"  # Incoming suggestion
+            elif message_type == "continue":
+                emoticon = "⏩"  # Continue request
+            else:
+                emoticon = "📥"  # Other incoming
+        else:  # outgoing
+            if message_type == "evaluation":
+                if content.get("accept", False):
+                    emoticon = "✅"  # Accepted evaluation
+                else:
+                    emoticon = "❌"  # Rejected evaluation
+            elif message_type == "continuation":
+                emoticon = "🔄"  # Continuation response
+            elif message_type == "error":
+                emoticon = "⚠️"  # Error response
+            else:
+                emoticon = "📤"  # Other outgoing
+        
+        # Add log entry
+        log_entry = {
+            "timestamp": timestamp,
+            "direction": direction,
+            "message_type": message_type,
+            "emoticon": emoticon,
+            "content": content
+        }
+        
+        # Add to logs with limit
+        self.logs.append(log_entry)
+        if len(self.logs) > self.max_logs:
+            self.logs.pop(0)  # Remove oldest entry
+        
+        # Save logs to file for sharing between servers
+        self.save_logs_to_file()
+    
+    def get_logs(self):
+        """Return all logs"""
+        return self.logs
+    
+    def clear_logs(self):
+        """Clear all logs"""
+        self.logs = []
+        self.save_logs_to_file()
 
+# Create a single instance of the log manager
+log_manager = LogManager()
+
+# Keep these for backwards compatibility
 def save_logs_to_file():
-    """Save communication logs to a file for sharing between servers"""
-    try:
-        with open(LOG_FILE_PATH, 'w') as f:
-            json.dump(communication_logs, f)
-    except Exception as e:
-        print(f"Error saving logs to file: {e}")
+    log_manager.save_logs_to_file()
 
 def load_logs_from_file():
-    """Load communication logs from file"""
-    global communication_logs
-    try:
-        if os.path.exists(LOG_FILE_PATH):
-            with open(LOG_FILE_PATH, 'r') as f:
-                loaded_logs = json.load(f)
-                if isinstance(loaded_logs, list):
-                    communication_logs = loaded_logs
-    except Exception as e:
-        print(f"Error loading logs from file: {e}")
+    log_manager.load_logs_from_file()
 
 def add_to_logs(direction: str, message_type: str, content: Any):
-    """Add a message to the communication logs"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    
-    # Determine emoticon based on message type and direction
-    emoticon = "📝"  # Default
-    if direction == "incoming":
-        if message_type == "suggestion":
-            emoticon = "💡"  # Incoming suggestion
-        elif message_type == "continue":
-            emoticon = "⏩"  # Continue request
-        else:
-            emoticon = "📥"  # Other incoming
-    else:  # outgoing
-        if message_type == "evaluation":
-            if content.get("accept", False):
-                emoticon = "✅"  # Accepted evaluation
-            else:
-                emoticon = "❌"  # Rejected evaluation
-        elif message_type == "continuation":
-            emoticon = "🔄"  # Continuation response
-        elif message_type == "error":
-            emoticon = "⚠️"  # Error response
-        else:
-            emoticon = "📤"  # Other outgoing
-    
-    # Add log entry
-    log_entry = {
-        "timestamp": timestamp,
-        "direction": direction,
-        "message_type": message_type,
-        "emoticon": emoticon,
-        "content": content
-    }
-    
-    # Add to logs with limit
-    communication_logs.append(log_entry)
-    if len(communication_logs) > MAX_LOGS:
-        communication_logs.pop(0)  # Remove oldest entry
-    
-    # Save logs to file for sharing between servers
-    save_logs_to_file()
+    log_manager.add_to_logs(direction, message_type, content)
+
+# Make communication_logs a function instead of a property for compatibility
+def communication_logs():
+    return log_manager.get_logs()
 
 def get_html_interface():
     """Generate HTML for the MCP server web interface"""
@@ -245,6 +281,7 @@ def get_html_interface():
         <div class="controls">
             <button onclick="refreshLogs()">Refresh Logs</button>
             <button onclick="clearLogs()">Clear Logs</button>
+            <button onclick="reloadLogsFromFile()">Reload from File</button>
         </div>
         
         <div class="log-container">
@@ -329,6 +366,16 @@ def get_html_interface():
                     .then(() => fetchLogs())
                     .catch(error => console.error('Error clearing logs:', error));
             }
+            
+            function reloadLogsFromFile() {
+                fetch('/api/reload', { method: 'GET' })
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('Logs reloaded:', data);
+                        fetchLogs();
+                    })
+                    .catch(error => console.error('Error reloading logs:', error));
+            }
         </script>
     </body>
     </html>
@@ -346,11 +393,16 @@ def setup_web_interface(app: FastAPI):
     @app.get("/api/logs")
     async def get_logs():
         """Return the communication logs"""
-        return JSONResponse(content=communication_logs)
+        return JSONResponse(content=log_manager.get_logs())
     
     @app.post("/api/logs/clear")
     async def clear_logs():
         """Clear all communication logs"""
-        global communication_logs
-        communication_logs = []
+        log_manager.clear_logs()
         return JSONResponse(content={"message": "Logs cleared"})
+    
+    @app.get("/api/reload")
+    async def reload_logs():
+        """Reload logs from file"""
+        log_manager.load_logs_from_file()
+        return JSONResponse(content={"message": "Logs reloaded", "count": len(log_manager.get_logs())})

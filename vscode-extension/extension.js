@@ -39,6 +39,11 @@ async function activate(context) {
     const acceptCommand = vscode.commands.registerCommand('ai-development-monitor.acceptSuggestion', acceptSuggestion);
     const rejectCommand = vscode.commands.registerCommand('ai-development-monitor.rejectSuggestion', rejectSuggestion);
     
+
+    // Register diagnostic test command
+    const diagnosticTest = require('./diagnostic_test');
+    const runTestCommand = vscode.commands.registerCommand('ai-development-monitor.runDiagnosticTest', diagnosticTest.runDiagnosticTests);
+    
     // Register debug command to show logs
     const showLogsCommand = vscode.commands.registerCommand('ai-development-monitor.showLogs', () => {
         Logger.show();
@@ -56,7 +61,8 @@ async function activate(context) {
         acceptCommand,
         rejectCommand,
         showLogsCommand,
-        statusBarItem
+        statusBarItem,
+        runTestCommand
     );
     
     // Initialize MCP client if enabled
@@ -79,8 +85,11 @@ async function activate(context) {
         await checkApiConnection();
     }
     
+    const copilotHandlers = require('./copilot_handlers');
+    
     // Set up event listeners for Copilot
-    setupCopilotListeners(context);
+    // setupCopilotListeners(context);
+    await copilotHandlers.setupCopilotListeners(context);
     
     // Update status bar
     updateStatusBar();
@@ -376,10 +385,22 @@ async function handleAutoContinuation() {
         // and then trigger this function
         
         // For now, we'll just expose it as a command that can be triggered
-        context.subscriptions.push(
-            vscode.commands.registerCommand('ai-development-monitor.sendContinue', sendContinueViaMcp)
-        );
-    }
+        // context.subscriptions.push(
+        //     vscode.commands.registerCommand('ai-development-monitor.sendContinue', sendContinueViaMcp)
+        // );
+        const evaluateCommand = vscode.commands.registerCommand(
+            'ai-development-monitor.evaluateCopilotSuggestion', 
+            copilotHandlers.evaluateCopilotSuggestion
+            );
+        const acceptCommand = vscode.commands.registerCommand(
+            'ai-development-monitor.acceptSuggestion', 
+            copilotHandlers.acceptSuggestion
+            );
+        const rejectCommand = vscode.commands.registerCommand(
+            'ai-development-monitor.rejectSuggestion', 
+            copilotHandlers.rejectSuggestion
+            );
+}
 }
 
 /**
