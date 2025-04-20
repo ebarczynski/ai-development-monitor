@@ -5,6 +5,7 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
+const tddExtension = require('./tdd_extension');
 
 /**
  * Diagnostic test function to check extension capabilities
@@ -231,9 +232,37 @@ async function runDiagnosticTests() {
                     if (testPhase === 1) {
                         // After receiving evaluation, send continue message
                         testPhase = 2;
-                        setTimeout(() => {
-                            sendContinueMessage();
-                        }, 1000);
+                        
+                        // Start TDD cycle with the suggestion code
+                        const suggestionMessage = {
+                            content: {
+                                original_code: "# Write a function to calculate factorial\n\ndef factorial(n):\n    pass",
+                                proposed_changes: "# Write a function to calculate factorial\n\ndef factorial(n):\n    if n <= 1:\n        return 1\n    return n * factorial(n-1)",
+                                language: "python",
+                                task_description: "Implement a recursive factorial function that calculates the factorial of a non-negative integer."
+                            }
+                        };
+                        
+                        // Run TDD cycle with the suggestion code
+                        outputChannel.appendLine('\n=== Starting TDD Testing Cycle ===');
+                        outputChannel.appendLine('Using MCP server to generate tests for the factorial function');
+                        
+                        tddExtension.runTDDCycle(
+                            outputChannel,
+                            ws,
+                            conversationId, 
+                            suggestionMessage.content.proposed_changes,
+                            suggestionMessage.content.language,
+                            5,
+                            () => {
+                                // After TDD cycle, continue with the next test phase
+                                setTimeout(() => {
+                                    sendContinueMessage();
+                                }, 1000);
+                            },
+                            suggestionMessage.content.task_description,
+                            suggestionMessage.content.original_code
+                        );
                     } else if (testPhase === 2) {
                         // After receiving continuation response, we're done
                         outputChannel.appendLine('✅ All message types tested successfully!');

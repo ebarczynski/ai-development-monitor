@@ -2,6 +2,22 @@
 
 All notable changes to the Python components of the AI Development Monitor will be documented in this file.
 
+## [0.3.1] - 2025-04-21
+
+### Added
+- Implemented Test-Driven Development (TDD) framework with 5-iteration cycle
+- Added new MCP message types for TDD workflow: `tdd_request` and `tdd_tests`
+- Enhanced web interface with reliable real-time auto-refresh functionality
+- Added visual indicators for auto-refresh status in web interface
+- Improved error handling in web server for more reliable log viewing
+- Added task description support in TDD test generation for context-aware tests
+
+### Fixed
+- Fixed web interface auto-refresh functionality that previously required manual refresh
+- Resolved issues with the TDD function parameter handling
+- Fixed caching issues in the web interface that prevented real-time updates
+- Improved error reporting and recovery in communication logs
+
 ## [0.3.0] - 2025-04-19
 
 ### Added
@@ -29,31 +45,16 @@ All notable changes to the Python components of the AI Development Monitor will 
   - ⏩ For continue requests
   - 🔄 For continuation responses
   - ⚠️ For error messages
-- Added automatic log saving/loading to persist communication history
-- Enhanced error handling in both HTTP and WebSocket handlers
-- Added support for handling both dictionary and Pydantic model message contents
-- Improved WebSocket message handling with better error reporting
 
 ### Fixed
-- Fixed import issues to ensure scripts run correctly from any directory
-- Fixed model type inconsistency in message handlers
-- Fixed shebang lines in Python scripts to use `python` instead of `python3`
-- Fixed HTTP endpoint handler to properly handle message content structure
-- Fixed WebSocket connection handling to properly report errors
+- Resolved issues with WebSocket connections dropping unexpectedly
+- Fixed data rendering issues in the web interface
+- Improved error handling in MCP message processing
 
-### Changed
-- Separated web interface to port 5002 (from MCP server on port 5001)
-- Modified MCP server root endpoint to direct users to the web interface
-- Improved logging with more detailed server status information
-- Enhanced startup scripts for both MCP server and web interface
-
-## [0.1.0] - 2025-04-19
+## [0.1.0] - 2025-04-18
 
 ### Added
-- Initial implementation of MCP server with WebSocket support
-- Basic HTTP API for evaluation requests
-- Support for suggestion evaluation via LLM
-- Added MCPMessage protocol definition with proper typing
-- Created example scripts for testing MCP communication
-- Implemented hallucination and recursive risk detection
-- Added structured message types for bidirectional communication
+- Initial release of MCP server with basic functionality
+- Support for handling suggestion and evaluation messages
+- Basic Web UI for viewing communication logs
+- Integration with Ollama for LLM-based code evaluation

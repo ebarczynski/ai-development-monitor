@@ -6,19 +6,24 @@ A comprehensive system for monitoring and evaluating GitHub Copilot code suggest
 
 ## Components
 
-### 1. Python Backend (v0.3.0)
-- **MCP Server**: Model Context Protocol server for structured AI-to-AI communication
-- **Web Interface**: Beautiful visualization of communication logs
-- **Monitor Agent**: Intelligent evaluation of code suggestions using LLM
+### 1. Python Backend (v0.3.1)
 
-### 2. VS Code Extension (v0.3.0)
+- **MCP Server**: Model Context Protocol server for structured AI-to-AI communication
+- **Web Interface**: Real-time visualization of communication logs
+- **Monitor Agent**: Intelligent evaluation of code suggestions using LLM
+- **TDD Framework**: Test-Driven Development support with automated test generation
+
+### 2. VS Code Extension (v0.3.1)
+
 - **Copilot Integration**: Captures and monitors GitHub Copilot suggestions
 - **MCP Client**: Communicates with the MCP server via WebSockets
 - **Evaluation UI**: Shows risk scores and recommendations in VS Code
+- **TDD Support**: Enables Test-Driven Development workflows with Copilot suggestions
 
 ## Getting Started
 
 ### Prerequisites
+
 - Python 3.10 or higher
 - Node.js 16 or higher
 - VS Code 1.85.0 or higher
@@ -28,12 +33,14 @@ A comprehensive system for monitoring and evaluating GitHub Copilot code suggest
 ### Installation
 
 1. Clone the repository:
+
    ```bash
    git clone https://github.com/username/ai-development-monitor.git
    cd ai-development-monitor
    ```
 
 2. Set up the Python environment:
+
    ```bash
    python -m venv venv
    source venv/bin/activate
@@ -41,11 +48,12 @@ A comprehensive system for monitoring and evaluating GitHub Copilot code suggest
    ```
 
 3. Install the VS Code extension:
+
    ```bash
    cd vscode-extension
    npm install
    vsce package
-   code --install-extension ai-development-monitor-0.2.0.vsix
+   code --install-extension ai-development-monitor-0.3.1.vsix
    ```
 
 ## Usage
@@ -53,11 +61,13 @@ A comprehensive system for monitoring and evaluating GitHub Copilot code suggest
 For the best experience, start both the MCP server and web interface:
 
 1. Start the MCP server:
+
    ```bash
    ./start_mcp_server.sh
    ```
 
 2. Start the web interface server:
+
    ```bash
    ./start_web_server.sh
    ```
@@ -65,8 +75,10 @@ For the best experience, start both the MCP server and web interface:
 3. Open VS Code and start using GitHub Copilot
    - Suggestions will be automatically evaluated using the MCP protocol
    - View communication logs at http://localhost:5002
+   - Run TDD cycles by using the diagnostic test or invoking TDD commands
 
 Alternatively, you can use just the REST API server:
+
 ```bash
 ./start_server.sh
 ```
@@ -80,6 +92,7 @@ The system uses a multi-component architecture:
 3. **MCP Server** routes messages between components using a structured protocol
 4. **Monitor Agent** evaluates code for risks using an LLM
 5. **Web Interface** visualizes the communication with colorful logs and emoticons
+6. **TDD Framework** generates tests and manages test-driven development cycles
 
 ## MCP Protocol
 
@@ -88,13 +101,30 @@ The Model Context Protocol (MCP) enables structured communication between AI sys
 - **Suggestions**: Code proposals from GitHub Copilot
 - **Evaluations**: Risk assessments from the Monitor Agent
 - **Continuations**: Follow-up requests when suggestions are incomplete
+- **TDD Requests**: Requests for test generation in TDD workflow
+- **TDD Tests**: Generated test code with validation suggestions
 
 Each message includes context tracking, allowing for threaded conversations between AI systems.
+
+## Test-Driven Development (TDD) Flow
+
+The TDD functionality follows a 5-iteration cycle:
+
+1. **Basic Testing**: Tests for basic functionality and simple edge cases
+2. **Extended Coverage**: More comprehensive tests for normal use cases
+3. **Error Handling**: Tests for invalid inputs and boundary conditions
+4. **Performance Testing**: Tests for optimization and large inputs
+5. **Comprehensive Review**: Final assessment and improvement suggestions
+
+Each iteration improves both the test suite and the implementation, progressively enhancing code quality.
+
+![TDD Flow Diagram](docs/tdd_flow_diagram.png)
 
 ## Known Issues
 
 - GitHub Copilot does not provide a public API, so the extension uses heuristic methods to detect suggestions
 - WebSocket connections may require reconnection in unstable network environments
+- TDD workflow currently only supports Python and JavaScript code
 
 ## Contributing
 

@@ -21,6 +21,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.monitor_agent import DevelopmentMonitorAgent
 from src.web_interface import add_to_logs, setup_web_interface, get_html_interface
+from src.tdd_helpers import handle_tdd_request, create_tdd_test_prompt, cleanup_generated_tests, generate_fallback_tests
 
 # Configure logging
 logging.basicConfig(
@@ -29,8 +30,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Global agent instance
-agent = None
+# Import agent conditionally to avoid circular imports
+try:
+    from src.monitor_agent import DevelopmentMonitorAgent
+    agent = None  # Will be set by the MCP server
+except ImportError:
+    agent = None
 
 # FastAPI app
 app = FastAPI(title="AI Development Monitor MCP Server")
@@ -79,11 +84,17 @@ class MCPContinueRequest(BaseModel):
     timeout_occurred: bool = Field(False, description="Whether a timeout occurred")
     error_message: Optional[str] = Field(None, description="Error message if applicable")
 
+class MCPTDDRequest(BaseModel):
+    """A request to generate tests for TDD"""
+    code: str = Field(..., description="The code to test")
+    language: str = Field(..., description="The programming language")
+    iteration: int = Field(..., description="The current TDD iteration number")
+
 class MCPMessage(BaseModel):
     """Base MCP message structure"""
     context: MCPContext
     message_type: str = Field(..., description="Type of message (suggestion, evaluation, continue, etc)")
-    content: Union[MCPSuggestion, MCPEvaluation, MCPContinueRequest, Dict[str, Any]] = Field(
+    content: Union[MCPSuggestion, MCPEvaluation, MCPContinueRequest, MCPTDDRequest, Dict[str, Any]] = Field(
         ..., description="The message content, varies by message_type"
     )
 
@@ -169,6 +180,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     await handle_suggestion(message, websocket)
                 elif message.message_type == "continue":
                     await handle_continue(message, websocket)
+                elif message.message_type == "tdd_request":
+                    await handle_tdd_request(message, websocket)
                 else:
                     error_msg = {
                         "error": f"Unsupported message type: {message.message_type}",

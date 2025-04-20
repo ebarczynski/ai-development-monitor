@@ -2,6 +2,17 @@
 
 All notable changes to the "AI Development Monitor" extension will be documented in this file.
 
+## [0.3.1] - 2025-04-21
+
+- Add Test-Driven Development (TDD) framework with 5-iteration workflow
+- Implement TDD support for Python and JavaScript code
+- Add integration with MCP server for test generation
+- Implement code evolution visualization during TDD cycles
+- Add task description support for context-aware test generation
+- Fix WebSocket connection stability issues with MCP server
+- Improve error handling in diagnostic test
+- Add tdd_extension.js module for TDD workflow management
+
 ## [0.3.0] - 2025-04-19
 
 - Fix VS Code dependencies packaging with improved .vscodeignore configuration
