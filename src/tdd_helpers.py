@@ -6,19 +6,6 @@ requests in the MCP server.
 """
 import json
 import logging
-from typing import Dict, Any, Optional
-
-# Configure logging
-logger = logging.getLogger(__name__)
-
-"""
-TDD Helpers for MCP Server
-
-This module provides helper functions for handling Test-Driven Development
-requests in the MCP server.
-"""
-import json
-import logging
 from typing import Dict, Any, Optional, Union
 from fastapi import WebSocket
 from pydantic import BaseModel
@@ -30,8 +17,25 @@ from src.web_interface import add_to_logs
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Global references
+try:
+    from src.monitor_agent import DevelopmentMonitorAgent
+    agent = None  # Will be set by MCP server
+except ImportError:
+    logger.warning("Unable to import DevelopmentMonitorAgent in tdd_helpers")
+    agent = None
+
+# Default max iterations for TDD cycles
+DEFAULT_MAX_ITERATIONS = 5
+
 # Forward references for type hints
 MCPMessage = Any  # This will be replaced with the actual import at runtime
+
+def set_agent(agent_instance):
+    """Set the agent instance from MCP server"""
+    global agent
+    agent = agent_instance
+    logger.info("Agent instance set in TDD helpers")
 
 async def handle_tdd_request(message, websocket: WebSocket):
     """Handle a TDD test generation request"""
@@ -49,6 +53,7 @@ async def handle_tdd_request(message, websocket: WebSocket):
         iteration = tdd_dict.get("iteration", 1)
         task_description = tdd_dict.get("task_description", "")
         original_code = tdd_dict.get("original_code", "")
+        max_iterations = tdd_dict.get("max_iterations", DEFAULT_MAX_ITERATIONS)
     else:
         # It's a dict
         code = tdd_request.get("code", "")
@@ -56,6 +61,12 @@ async def handle_tdd_request(message, websocket: WebSocket):
         iteration = tdd_request.get("iteration", 1)
         task_description = tdd_request.get("task_description", "")
         original_code = tdd_request.get("original_code", "")
+        max_iterations = tdd_request.get("max_iterations", DEFAULT_MAX_ITERATIONS)
+    
+    # Ensure iteration is within bounds
+    if iteration > max_iterations:
+        logger.warning(f"Requested iteration {iteration} exceeds max_iterations {max_iterations}")
+        iteration = max_iterations
     
     # Get additional info from metadata if available
     test_purpose = "Generate unit tests"
@@ -70,22 +81,30 @@ async def handle_tdd_request(message, websocket: WebSocket):
             # If original code not in content, try to get it from metadata
             if not original_code and "original_code" in message.context.metadata:
                 original_code = message.context.metadata.get("original_code", "")
+            
+            # Check for max iterations in metadata
+            if "max_iterations" in message.context.metadata:
+                metadata_max_iterations = message.context.metadata.get("max_iterations")
+                if isinstance(metadata_max_iterations, int) and metadata_max_iterations > 0:
+                    max_iterations = metadata_max_iterations
     
     # Create prompt for the LLM
-    prompt = create_tdd_test_prompt(code, language, iteration, test_purpose, task_description, original_code)
+    prompt = create_tdd_test_prompt(code, language, iteration, test_purpose, task_description, original_code, max_iterations)
     
     # Generate tests using LLM
     generated_tests = ""
     try:
         # Use the agent to generate tests
-        if agent and agent.llm_client:
+        if agent and hasattr(agent, 'llm_client') and agent.llm_client:
             # Generate tests
+            logger.info(f"Generating tests for iteration {iteration}/{max_iterations} using agent")
             response = await agent.llm_client.generate_async(prompt)
-            generated_tests = response.get("content", "")
+            generated_tests = response
             
             # Basic cleanup and validation
             generated_tests = cleanup_generated_tests(generated_tests, language)
         else:
+            logger.warning("Agent not available, using fallback tests")
             generated_tests = generate_fallback_tests(code, language, iteration, task_description)
     except Exception as e:
         logger.error(f"Error generating tests: {e}")
@@ -94,12 +113,13 @@ async def handle_tdd_request(message, websocket: WebSocket):
     # Prepare response
     response = {
         "message_type": "tdd_tests",
-        "context": message.context.dict(),
+        "context": message.context.model_dump() if hasattr(message.context, "model_dump") else message.context.dict(),
         "content": {
             "test_code": generated_tests,
             "language": language,
             "iteration": iteration,
-            "task_description": task_description
+            "task_description": task_description,
+            "max_iterations": max_iterations
         }
     }
     
@@ -109,7 +129,7 @@ async def handle_tdd_request(message, websocket: WebSocket):
     # Send response
     await websocket.send_text(json.dumps(response))
 
-def create_tdd_test_prompt(code, language, iteration, test_purpose, task_description="", original_code=""):
+def create_tdd_test_prompt(code, language, iteration, test_purpose, task_description="", original_code="", max_iterations=DEFAULT_MAX_ITERATIONS):
     """Create a prompt for generating TDD tests based on iteration number and task description"""
     base_prompt = f"""
 You are a test-driven development expert. Generate unit tests for the following {language} code:
@@ -179,8 +199,28 @@ For the final iteration, conduct a comprehensive review:
 """
     }
     
-    # Get the appropriate prompt for this iteration, or use a default one
-    iteration_prompt = iteration_prompts.get(iteration, "Generate appropriate tests for this iteration.")
+    # Handle custom max_iterations by adapting prompts as needed
+    if max_iterations != 5:
+        if iteration == max_iterations:
+            # If this is the final iteration (regardless of number), use the comprehensive review
+            iteration_prompt = iteration_prompts.get(5, "Conduct a comprehensive review of the code and tests.")
+        else:
+            # Get the appropriate prompt for this iteration, or adapt based on percentage
+            progress_percentage = iteration / max_iterations
+            if progress_percentage < 0.25:
+                iteration_prompt = iteration_prompts.get(1, "Generate basic tests for the code.")
+            elif progress_percentage < 0.5:
+                iteration_prompt = iteration_prompts.get(2, "Generate extended tests for the code.")
+            elif progress_percentage < 0.75:
+                iteration_prompt = iteration_prompts.get(3, "Focus on error handling in your tests.")
+            else:
+                iteration_prompt = iteration_prompts.get(4, "Focus on performance considerations in your tests.")
+    else:
+        # Use standard 5-iteration prompts
+        iteration_prompt = iteration_prompts.get(iteration, "Generate appropriate tests for this iteration.")
+    
+    # Add iteration context
+    iteration_prompt = f"This is iteration {iteration} of {max_iterations}.\n{iteration_prompt}"
     
     # Add custom test purpose if provided
     if test_purpose and test_purpose != "Generate unit tests":
@@ -197,7 +237,7 @@ Ensure tests are well-structured and follow best practices for the language.
 def cleanup_generated_tests(test_code, language):
     """Clean up the generated test code to ensure it's valid"""
     # Remove markdown code block markers if present
-    test_code = test_code.replace("```python", "").replace("```", "")
+    test_code = test_code.replace("```python", "").replace("```javascript", "").replace("```js", "").replace("```", "")
     
     # Add appropriate imports for the language
     if language.lower() == "python" and "import " not in test_code:
@@ -239,8 +279,9 @@ def test_factorial_error_handling():
 """
     else:
         # JavaScript fallback
+        task_comment = f" for {task_description}" if task_description else ""
         return f"""
-// Fallback tests for iteration {iteration}
+// Fallback tests for iteration {iteration}{task_comment}
 const assert = require('assert');
 
 describe('Factorial Function', () => {{
