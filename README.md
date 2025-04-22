@@ -6,19 +6,22 @@ A comprehensive system for monitoring and evaluating GitHub Copilot code suggest
 
 ## Components
 
-### 1. Python Backend (v0.3.1)
+### 1. Python Backend (v0.4.0)
 
 - **MCP Server**: Model Context Protocol server for structured AI-to-AI communication
 - **Web Interface**: Real-time visualization of communication logs
 - **Monitor Agent**: Intelligent evaluation of code suggestions using LLM
 - **TDD Framework**: Test-Driven Development support with automated test generation
+- **Pydantic v2 Support**: Backward compatibility with modern data validation
 
-### 2. VS Code Extension (v0.3.1)
+### 2. VS Code Extension (v0.4.1)
 
 - **Copilot Integration**: Captures and monitors GitHub Copilot suggestions
 - **MCP Client**: Communicates with the MCP server via WebSockets
 - **Evaluation UI**: Shows risk scores and recommendations in VS Code
 - **TDD Support**: Enables Test-Driven Development workflows with Copilot suggestions
+- **Dedicated Panel**: Rich visual interface for detailed evaluation results
+- **Smart Notifications**: Configurable notification system with multiple verbosity levels
 
 ## Getting Started
 

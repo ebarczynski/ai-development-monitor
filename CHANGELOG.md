@@ -2,6 +2,20 @@
 
 All notable changes to the Python components of the AI Development Monitor will be documented in this file.
 
+## [0.4.0] - 2025-04-22
+
+### Added
+- Added the `setup_web_interface` function to improve web interface integration
+- Enhanced TDD testing with improved error handling in test generation
+- Implemented backward compatibility for Pydantic v2 by supporting both `dict()` and `model_dump()` methods
+- Updated response handling in TDD helpers for more reliable test execution
+
+### Fixed
+- Fixed Pydantic deprecation warnings by updating to use `model_dump()` where appropriate
+- Resolved `'dict' object has no attribute 'generate_async'` error in TDD helpers
+- Fixed error handling in `generate_tests` function to properly use the LLM client
+- Improved context serialization in MCP responses for compatibility with newer Pydantic versions
+
 ## [0.3.1] - 2025-04-21
 
 ### Added
@@ -11,14 +25,6 @@ All notable changes to the Python components of the AI Development Monitor will 
 - Added visual indicators for auto-refresh status in web interface
 - Improved error handling in web server for more reliable log viewing
 - Added task description support in TDD test generation for context-aware tests
-
-### Fixed
-- Fixed web interface auto-refresh functionality that previously required manual refresh
-- Resolved issues with the TDD function parameter handling
-- Fixed caching issues in the web interface that prevented real-time updates
-- Improved error reporting and recovery in communication logs
-
-## [0.3.0] - 2025-04-19
 
 ### Added
 - Implemented class-based log management system for better memory management
