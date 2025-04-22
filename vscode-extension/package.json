@@ -2,7 +2,7 @@
   "name": "ai-development-monitor",
   "displayName": "AI Development Monitor",
   "description": "Monitor and evaluate GitHub Copilot suggestions",
-  "version": "0.3.1",
+  "version": "0.4.1",
   "publisher": "local-publisher",
   "license": "MIT",
   "repository": {
@@ -44,7 +44,19 @@
       {
         "command": "ai-development-monitor.runDiagnosticTest",
         "title": "AI Dev: Run Diagnostic Test"
-      }
+      },
+      {
+      "command": "ai-development-monitor.extractChatContext",
+      "title": "AI Monitor: Extract Context from Copilot Chat"
+      },
+      {
+        "command": "ai-development-monitor.viewExtractedContext",
+        "title": "AI Monitor: View Extracted Chat Context"
+      },
+      {
+        "command": "ai-development-monitor.showPanel",
+        "title": "AI Dev: Show Monitor Panel"
+      }    
     ],
     "configuration": {
       "title": "AI Development Monitor",
@@ -53,6 +65,22 @@
           "type": "boolean",
           "default": true,
           "description": "Enable or disable the AI Development Monitor"
+        },
+        "aiDevelopmentMonitor.autoEvaluateChatSuggestions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically evaluate code suggestions from Copilot Chat"
+        },
+        "aiDevelopmentMonitor.notificationLevel": {
+          "type": "string",
+          "enum": ["minimal", "normal", "detailed"],
+          "default": "normal",
+          "description": "Control how verbose notifications are displayed"
+        },
+        "aiDevelopmentMonitor.showPanel": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically show the AI Monitor panel when evaluations complete"
         },
         "aiDevelopmentMonitor.apiUrl": {
           "type": "string",
