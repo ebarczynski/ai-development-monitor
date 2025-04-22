@@ -20,8 +20,9 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.monitor_agent import DevelopmentMonitorAgent
-from src.web_interface import add_to_logs, setup_web_interface, get_html_interface
-from src.tdd_helpers import handle_tdd_request, create_tdd_test_prompt, cleanup_generated_tests, generate_fallback_tests
+from src.web_interface import add_to_logs, get_html_interface
+from src.tdd_helpers import handle_tdd_request, create_tdd_test_prompt, cleanup_generated_tests, generate_fallback_tests, set_agent
+from src.tdd_evaluator import evaluate_tdd_results, combine_evaluation_results
 
 # Configure logging
 logging.basicConfig(
@@ -186,7 +187,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     error_msg = {
                         "error": f"Unsupported message type: {message.message_type}",
                         "message_type": "error",
-                        "context": message.context.dict()
+                        "context": message.context.model_dump() if hasattr(message.context, "model_dump") else message.context.dict()
                     }
                     # Log outgoing error message
                     add_to_logs("outgoing", "error", error_msg)
@@ -221,36 +222,122 @@ async def handle_suggestion(message: MCPMessage, websocket: WebSocket):
     # Check if content is a dict or a Pydantic model
     if hasattr(suggestion, "__dict__"):
         # It's a Pydantic model
-        suggestion_dict = suggestion.dict() if hasattr(suggestion, "dict") else suggestion.__dict__
+        suggestion_dict = suggestion.model_dump() if hasattr(suggestion, "model_dump") else (
+            suggestion.dict() if hasattr(suggestion, "dict") else suggestion.__dict__
+        )
         original_code = suggestion_dict.get("original_code", "")
         proposed_changes = suggestion_dict.get("proposed_changes", "")
         task_description = suggestion_dict.get("task_description", "Implement functionality")
+        language = suggestion_dict.get("language", "python")
     else:
         # It's a dict
         original_code = suggestion.get("original_code", "")
         proposed_changes = suggestion.get("proposed_changes", "")
         task_description = suggestion.get("task_description", "Implement functionality")
+        language = suggestion.get("language", "python")
     
-    # Evaluate the changes
-    accept, evaluation = agent.evaluate_proposed_changes(
+    # Check if TDD testing is requested in metadata
+    run_tdd = True
+    max_iterations = 5
+    
+    if hasattr(message.context, "metadata") and message.context.metadata:
+        if isinstance(message.context.metadata, dict):
+            run_tdd = message.context.metadata.get("run_tdd", run_tdd)
+            max_iterations = message.context.metadata.get("max_iterations", max_iterations)
+    
+    # First get the LLM's evaluation
+    accept, llm_evaluation = agent.evaluate_proposed_changes(
         original_code, 
         proposed_changes, 
         task_description
     )
     
+    # Initialize TDD evaluation results
+    tdd_evaluation = {
+        "tdd_score": 0.5,
+        "issues_detected": [],
+        "recommendations": [],
+        "accept": None
+    }
+    
+    # Run TDD tests if requested
+    tdd_test_results = []
+    if run_tdd:
+        try:
+            # Log TDD process beginning
+            logger.info(f"Starting TDD evaluation with {max_iterations} iterations")
+            add_to_logs("outgoing", "info", {"message": f"Starting TDD evaluation with {max_iterations} iterations"})
+            
+            # Run TDD tests for each iteration
+            for iteration in range(1, max_iterations + 1):
+                # Create a TDD request for this iteration
+                tdd_request_context = MCPContext(
+                    conversation_id=message.context.conversation_id,
+                    message_id=f"{message.context.message_id}_tdd_{iteration}",
+                    parent_id=message.context.message_id,
+                    metadata={
+                        "tdd_iteration": iteration,
+                        "max_iterations": max_iterations,
+                        "task_description": task_description,
+                        "original_code": original_code
+                    }
+                )
+                
+                tdd_request_content = {
+                    "code": proposed_changes,
+                    "language": language,
+                    "iteration": iteration,
+                    "task_description": task_description,
+                    "original_code": original_code,
+                    "max_iterations": max_iterations
+                }
+                
+                tdd_request = MCPMessage(
+                    context=tdd_request_context,
+                    message_type="tdd_request",
+                    content=tdd_request_content
+                )
+                
+                # Log the TDD request
+                add_to_logs("outgoing", "tdd_request", {
+                    "iteration": iteration,
+                    "language": language,
+                    "max_iterations": max_iterations
+                })
+                
+                # Process the TDD request and get tests
+                tdd_response = await process_tdd_request(tdd_request, proposed_changes, language)
+                
+                if tdd_response:
+                    tdd_test_results.append(tdd_response)
+            
+            # Evaluate TDD results
+            if tdd_test_results:
+                tdd_evaluation = evaluate_tdd_results(tdd_test_results, proposed_changes, task_description)
+                logger.info(f"TDD evaluation complete. Score: {tdd_evaluation.get('tdd_score', 0.5)}, Accept: {tdd_evaluation.get('accept', None)}")
+        
+        except Exception as e:
+            logger.error(f"Error during TDD evaluation: {e}")
+            add_to_logs("outgoing", "error", {"message": f"TDD evaluation error: {str(e)}"})
+    
+    # Combine LLM and TDD evaluations for final decision
+    final_accept, final_evaluation = combine_evaluation_results(tdd_evaluation, llm_evaluation)
+    
     # Prepare response
-    analysis = evaluation.get("analysis", {})
+    analysis = final_evaluation.get("analysis", {})
     response = {
         "message_type": "evaluation",
-        "context": message.context.dict(),
+        "context": message.context.model_dump() if hasattr(message.context, "model_dump") else message.context.dict(),
         "content": {
-            "accept": accept,
+            "accept": final_accept,
             "hallucination_risk": analysis.get("hallucination_risk", 0.5),
             "recursive_risk": analysis.get("recursive_risk", 0.5),
             "alignment_score": analysis.get("alignment_score", 0.5),
+            "tdd_score": analysis.get("tdd_score", 0.5),
             "issues_detected": analysis.get("issues_detected", []),
             "recommendations": analysis.get("recommendations", []),
-            "reason": evaluation.get("reason", "Automated evaluation")
+            "reason": final_evaluation.get("reason", "Combined TDD and LLM evaluation"),
+            "tdd_test_results": tdd_test_results if run_tdd else []
         }
     }
     
@@ -259,6 +346,29 @@ async def handle_suggestion(message: MCPMessage, websocket: WebSocket):
     
     # Send response
     await websocket.send_text(json.dumps(response))
+
+async def process_tdd_request(tdd_request, code, language):
+    """Process a TDD request and return the test results"""
+    try:
+        # Create a virtual websocket to handle the response
+        class VirtualWebSocket:
+            async def send_text(self, text):
+                self.response = json.loads(text)
+        
+        virtual_ws = VirtualWebSocket()
+        
+        # Process the TDD request
+        await handle_tdd_request(tdd_request, virtual_ws)
+        
+        # Return the test result
+        if hasattr(virtual_ws, 'response'):
+            return virtual_ws.response.get('content', {})
+        
+        return None
+    
+    except Exception as e:
+        logger.error(f"Error processing TDD request: {e}")
+        return None
 
 async def handle_continue(message: MCPMessage, websocket: WebSocket):
     """Handle a continue message"""
@@ -282,7 +392,7 @@ async def handle_continue(message: MCPMessage, websocket: WebSocket):
     # Prepare response
     response = {
         "message_type": "continuation",
-        "context": message.context.dict(),
+        "context": message.context.model_dump() if hasattr(message.context, "model_dump") else message.context.dict(),
         "content": {
             "response": llm_response.get("response", ""),
             "success": llm_response.get("success", False),
@@ -391,6 +501,9 @@ def run_server(host: str = '0.0.0.0', port: int = 5001):
     logger.info("Initializing AI Development Monitor Agent...")
     agent = DevelopmentMonitorAgent('config.json')
     
+    # Set the agent in the TDD helpers
+    set_agent(agent)
+    
     # Connect to the LLM
     logger.info("Connecting to LLM...")
     if agent.connect_llm():
@@ -398,8 +511,8 @@ def run_server(host: str = '0.0.0.0', port: int = 5001):
     else:
         logger.warning("Failed to connect to LLM. Will attempt connection when requested via API")
     
-    # Set up web interface
-    setup_web_interface(app)
+    # # Set up web interface
+    # setup_web_interface(app)
     
     # Start the server
     logger.info(f"Starting MCP server on {host}:{port}")
