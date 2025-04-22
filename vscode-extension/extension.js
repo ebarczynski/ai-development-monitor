@@ -4,6 +4,13 @@ const https = require('https');
 const http = require('http');
 const MCPClient = require('./mcp_client');
 const Logger = require('./logger');
+const CopilotIntegration = require('./copilot_integration');
+const CopilotChatIntegration = require('./copilot_chat_integration');
+const AIMonitorPanel = require('./ai_monitor_panel');
+// Import integration modules
+const evaluationDisplay = require('./evaluation_display');
+const chatProcessor = require('./chat_processor');
+const suggestionEvaluator = require('./suggestion_evaluator');
 
 // Keep track of state
 let statusBarItem;
@@ -12,6 +19,9 @@ let lastEvaluation = null;
 let retryTimeout = null;
 let connectionStatus = false;
 let mcpClient = null;
+let copilotIntegration = null;
+let copilotChatIntegration = null;
+let notificationHandler;
 
 /**
  * @param {vscode.ExtensionContext} context
@@ -24,6 +34,11 @@ async function activate(context) {
     });
     
     Logger.info('AI Development Monitor is now active', 'system');
+    console.log('MCPClient imported:', typeof MCPClient);
+    // Initialize notification handler
+    const NotificationHandler = require('./notification_handler');
+    notificationHandler = new NotificationHandler();
+    notificationHandler.setContext(context);
 
     // Create status bar item
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -39,6 +54,11 @@ async function activate(context) {
     const acceptCommand = vscode.commands.registerCommand('ai-development-monitor.acceptSuggestion', acceptSuggestion);
     const rejectCommand = vscode.commands.registerCommand('ai-development-monitor.rejectSuggestion', rejectSuggestion);
     
+    // Register UI panel command
+    const showPanelCommand = vscode.commands.registerCommand('ai-development-monitor.showPanel', () => {
+        const panel = AIMonitorPanel.createOrShow(context);
+        panel.addLogEntry('Panel opened', 'info');
+    });
 
     // Register diagnostic test command
     const diagnosticTest = require('./diagnostic_test');
@@ -53,7 +73,7 @@ async function activate(context) {
     const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
     monitorEnabled = config.get('enabled', true);
     
-    // Add commands to context
+    // Add the panel command to subscriptions
     context.subscriptions.push(
         enableCommand,
         disableCommand,
@@ -61,6 +81,7 @@ async function activate(context) {
         acceptCommand,
         rejectCommand,
         showLogsCommand,
+        showPanelCommand,
         statusBarItem,
         runTestCommand
     );
@@ -91,6 +112,61 @@ async function activate(context) {
     // setupCopilotListeners(context);
     await copilotHandlers.setupCopilotListeners(context);
     
+    // Initialize Copilot Chat integration
+    copilotChatIntegration = new CopilotChatIntegration();
+    const chatAvailable = await copilotChatIntegration.initialize();
+    if (chatAvailable) {
+        Logger.info('GitHub Copilot Chat integration initialized successfully', 'copilot-chat');
+        
+        // Register additional Chat-specific commands
+        const extractChatCommand = vscode.commands.registerCommand('ai-development-monitor.extractChatContext', () => {
+            copilotChatIntegration.extractChatContext(true);
+        });
+        
+        const viewExtractedContextCommand = vscode.commands.registerCommand('ai-development-monitor.viewExtractedContext', () => {
+            copilotChatIntegration.showExtractedContext();
+        });
+        
+        context.subscriptions.push(
+            extractChatCommand,
+            viewExtractedContextCommand
+        );
+        
+        // Set up callback to extract context when it changes
+        copilotChatIntegration.onContextChange((context) => {
+            chatProcessor.processChatContext(context);
+        });
+        
+    } else {
+        Logger.warn('GitHub Copilot Chat integration not available', 'copilot-chat');
+    }
+
+        // Initialize integration modules
+    evaluationDisplay.initialize({
+        context,
+        statusBarItem,
+        AIMonitorPanel,
+        notificationHandler
+    });
+
+    chatProcessor.initialize({
+        mcpClient,
+        monitorEnabled,
+        notificationHandler,
+        AIMonitorPanel,
+        evaluateChatSuggestion: suggestionEvaluator.evaluateChatSuggestion
+    });
+
+    suggestionEvaluator.initialize({
+        mcpClient,
+        connectionStatus,
+        notificationHandler,
+        AIMonitorPanel,
+        checkApiConnection,
+        httpRequest,
+        showEvaluationResult: evaluationDisplay.showEvaluationResult
+    });
+
     // Update status bar
     updateStatusBar();
 }
@@ -127,7 +203,7 @@ async function checkApiConnection() {
     updateStatusBar();
     return connectionStatus;
 }
-
+        
 /**
  * Make an HTTP request using built-in http/https modules
  */
@@ -180,6 +256,7 @@ function httpRequest(url, method, data = null) {
     });
 }
 
+
 /**
  * Enable the AI Development Monitor
  */
@@ -227,74 +304,74 @@ function updateStatusBar() {
     }
 }
 
-/**
- * Set up event listeners for GitHub Copilot
- */
-function setupCopilotListeners(context) {
-    // Listen for inline suggestion events
-    // This requires accessing internal Copilot APIs which may change over time
+// /**
+//  * Set up event listeners for GitHub Copilot
+//  */
+// function setupCopilotListeners(context) {
+//     // Listen for inline suggestion events
+//     // This requires accessing internal Copilot APIs which may change over time
     
-    Logger.info('Setting up GitHub Copilot listeners', 'copilot');
+//     Logger.info('Setting up GitHub Copilot listeners', 'copilot');
     
-    // First, check if Copilot is installed
-    const copilotExtension = vscode.extensions.getExtension('GitHub.copilot');
-    if (!copilotExtension) {
-        Logger.warn('GitHub Copilot extension not found. AI Development Monitor requires Copilot to function.', 'copilot');
-        vscode.window.showWarningMessage('GitHub Copilot extension not found. AI Development Monitor requires Copilot to function.');
-        return;
-    }
+//     // First, check if Copilot is installed
+//     const copilotExtension = vscode.extensions.getExtension('GitHub.copilot');
+//     if (!copilotExtension) {
+//         Logger.warn('GitHub Copilot extension not found. AI Development Monitor requires Copilot to function.', 'copilot');
+//         vscode.window.showWarningMessage('GitHub Copilot extension not found. AI Development Monitor requires Copilot to function.');
+//         return;
+//     }
     
-    Logger.info('GitHub Copilot extension found', 'copilot');
+//     Logger.info('GitHub Copilot extension found', 'copilot');
     
-    // Try to access Copilot API (this is experimental and may not work consistently)
-    try {
-        if (copilotExtension.isActive) {
-            Logger.debug('Copilot extension is already active', 'copilot');
-            setupCopilotApi(copilotExtension.exports);
-        } else {
-            Logger.debug('Activating Copilot extension', 'copilot');
-            copilotExtension.activate().then(exports => {
-                setupCopilotApi(exports);
-            }).catch(err => {
-                Logger.error('Failed to activate Copilot extension', err, 'copilot');
-            });
-        }
-    } catch (error) {
-        Logger.error('Error accessing Copilot API', error, 'copilot');
-    }
+//     // Try to access Copilot API (this is experimental and may not work consistently)
+//     try {
+//         if (copilotExtension.isActive) {
+//             Logger.debug('Copilot extension is already active', 'copilot');
+//             setupCopilotApi(copilotExtension.exports);
+//         } else {
+//             Logger.debug('Activating Copilot extension', 'copilot');
+//             copilotExtension.activate().then(exports => {
+//                 setupCopilotApi(exports);
+//             }).catch(err => {
+//                 Logger.error('Failed to activate Copilot extension', err, 'copilot');
+//             });
+//         }
+//     } catch (error) {
+//         Logger.error('Error accessing Copilot API', error, 'copilot');
+//     }
     
-    // Set up API polling to check for suggestions as fallback
-    Logger.info('Setting up suggestion polling as fallback', 'copilot');
-    const suggestionCheckInterval = setInterval(async () => {
-        if (!monitorEnabled || !connectionStatus) {
-            return;
-        }
+//     // Set up API polling to check for suggestions as fallback
+//     Logger.info('Setting up suggestion polling as fallback', 'copilot');
+//     const suggestionCheckInterval = setInterval(async () => {
+//         if (!monitorEnabled || !connectionStatus) {
+//             return;
+//         }
         
-        try {
-            // Check for visual indicators of active suggestions
-            const editor = vscode.window.activeTextEditor;
-            if (!editor) {
-                return;
-            }
+//         try {
+//             // Check for visual indicators of active suggestions
+//             const editor = vscode.window.activeTextEditor;
+//             if (!editor) {
+//                 return;
+//             }
             
-            // Check for Copilot's ghost text decorations
-            // This is a heuristic approach that might not always work
-            const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
-            if (config.get('autoEvaluate', true)) {
-                // Look for changes in the document that might indicate a suggestion
-                // For now, this just serves as a placeholder for more sophisticated detection
-                Logger.trace('Checking for Copilot suggestions', 'copilot');
-            }
+//             // Check for Copilot's ghost text decorations
+//             // This is a heuristic approach that might not always work
+//             const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
+//             if (config.get('autoEvaluate', true)) {
+//                 // Look for changes in the document that might indicate a suggestion
+//                 // For now, this just serves as a placeholder for more sophisticated detection
+//                 Logger.trace('Checking for Copilot suggestions', 'copilot');
+//             }
             
-            // Auto-continuation for errors or timeouts
-            handleAutoContinuation();
-        } catch (error) {
-            Logger.error('Error in suggestion polling', error, 'copilot');
-        }
-    }, 1000);
+//             // Auto-continuation for errors or timeouts
+//             handleAutoContinuation();
+//         } catch (error) {
+//             Logger.error('Error in suggestion polling', error, 'copilot');
+//         }
+//     }, 1000);
     
-    context.subscriptions.push({ dispose: () => clearInterval(suggestionCheckInterval) });
-}
+//     context.subscriptions.push({ dispose: () => clearInterval(suggestionCheckInterval) });
+// }
 
 /**
  * Set up access to GitHub Copilot API if available

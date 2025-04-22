@@ -96,7 +96,27 @@ function logObject(level, label, obj, category = 'general') {
     
     let objString;
     try {
-        objString = JSON.stringify(obj, null, 2);
+        // Use a replacer function to handle circular references
+        const getCircularReplacer = () => {
+            const seen = new WeakSet();
+            return (key, value) => {
+                // Handle special types that cause circular references
+                if (key === 'socket' || key === 'parser' || key === '_httpMessage' || key === 'client') {
+                    return '[Circular Reference]';
+                }
+                
+                // Generic circular reference detection
+                if (typeof value === 'object' && value !== null) {
+                    if (seen.has(value)) {
+                        return '[Circular Reference]';
+                    }
+                    seen.add(value);
+                }
+                return value;
+            };
+        };
+        
+        objString = JSON.stringify(obj, getCircularReplacer(), 2);
     } catch (error) {
         objString = `[Unstringifiable object: ${error.message}]`;
     }

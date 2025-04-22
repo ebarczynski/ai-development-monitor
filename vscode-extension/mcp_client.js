@@ -2,6 +2,7 @@
 const vscode = require('vscode');
 const WebSocket = require('ws');
 const Logger = require('./logger');
+const crypto = require('crypto');
 
 class MCPClient {
     constructor() {
@@ -19,6 +20,16 @@ class MCPClient {
         // Set up heartbeat
         this.heartbeatInterval = null;
         this.lastPongTime = Date.now();
+        
+        // Enhanced context from Copilot Chat
+        this.enhancedContext = {
+            taskDescription: "",
+            originalCode: "",
+            language: ""
+        };
+        
+        // Progress notification
+        this.progressNotification = null;
     }
 
     /**
@@ -31,12 +42,40 @@ class MCPClient {
 
         this.connectionPromise = new Promise((resolve, reject) => {
             try {
-                const wsUrl = `${this.mcpUrl}/${this.clientId}`;
+                // Refresh configuration in case it changed
+                this.config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
+                this.mcpUrl = this.config.get('mcpUrl', 'ws://localhost:5001/ws');
+                
+                // Construct the URL correctly
+                let wsUrl = this.mcpUrl;
+                // Make sure we have the correct format - add /ws if needed
+                if (!wsUrl.endsWith('/ws')) {
+                    if (!wsUrl.endsWith('/')) {
+                        wsUrl += '/';
+                    }
+                    wsUrl += 'ws';
+                }
+                // Append the client ID
+                wsUrl = `${wsUrl}/${this.clientId}`;
+                
                 Logger.info(`Connecting to MCP server at ${wsUrl}`, 'mcp');
+                
+                // Set a connection timeout
+                const connectionTimeout = setTimeout(() => {
+                    if (!this.connected) {
+                        Logger.error('Connection attempt timed out', null, 'mcp');
+                        if (this.socket) {
+                            this.socket.terminate();
+                            this.socket = null;
+                        }
+                        reject(new Error('Connection timeout'));
+                    }
+                }, 10000); // 10 second timeout
                 
                 this.socket = new WebSocket(wsUrl);
                 
                 this.socket.on('open', () => {
+                    clearTimeout(connectionTimeout);
                     Logger.info('Connected to MCP server', 'mcp');
                     this.connected = true;
                     this.reconnectAttempts = 0;
@@ -44,6 +83,7 @@ class MCPClient {
                     this.startHeartbeat();
                     resolve(true);
                 });
+                
                 
                 this.socket.on('message', (data) => {
                     try {
@@ -57,12 +97,14 @@ class MCPClient {
                 });
                 
                 this.socket.on('error', (error) => {
-                    Logger.error('WebSocket error', error, 'mcp');
+                    clearTimeout(connectionTimeout);
+                    Logger.error(`WebSocket error: ${error.message}`, error, 'mcp');
                     this.connected = false;
                     this.stopHeartbeat();
                     
                     // Only reject if this is the first connection attempt
                     if (this.reconnectAttempts === 0) {
+                        this.connectionPromise = null;
                         reject(error);
                     }
                     
@@ -70,6 +112,7 @@ class MCPClient {
                 });
                 
                 this.socket.on('close', () => {
+                    clearTimeout(connectionTimeout);
                     Logger.info('Disconnected from MCP server', 'mcp');
                     this.connected = false;
                     this.connectionPromise = null;
@@ -295,4 +338,168 @@ class MCPClient {
     }
 }
 
+/**
+ * Set enhanced context from Copilot Chat
+ * @param {Object} context Enhanced context with taskDescription, originalCode, etc
+ */
+MCPClient.prototype.setEnhancedContext = function(context) {
+    this.enhancedContext = {
+        ...this.enhancedContext,
+        ...context
+    };
+    
+    Logger.debug(`Enhanced context updated: ${JSON.stringify(this.enhancedContext)}`, 'mcp');
+};
+
+/**
+ * Send a suggestion for evaluation
+ * @param {Object} suggestion The suggestion data
+ * @returns {Promise<Object>} The evaluation response
+ */
+MCPClient.prototype.sendSuggestion = async function(suggestion) {
+    try {
+        // Show progress in the VS Code UI
+        this.showProgress("Evaluating code suggestion...");
+        
+        // Enhance suggestion with chat context if available
+        if (this.enhancedContext.taskDescription && !suggestion.task_description) {
+            suggestion.task_description = this.enhancedContext.taskDescription;
+        }
+        
+        if (this.enhancedContext.language && !suggestion.language) {
+            suggestion.language = this.enhancedContext.language;
+        }
+        
+        // If original code is not provided but we have it from chat context, use that
+        if (!suggestion.original_code && this.enhancedContext.originalCode) {
+            suggestion.original_code = this.enhancedContext.originalCode;
+        }
+        
+        Logger.info('Sending suggestion for evaluation', 'mcp');
+        Logger.debug(`Suggestion data: ${JSON.stringify(suggestion)}`, 'mcp');
+        
+        // Add TDD metadata to request
+        const metadata = {
+            run_tdd: true,
+            max_iterations: 5, // Default to 5 iterations
+            source: suggestion.source || 'copilot_chat'
+        };
+        
+        // Create message with enhanced metadata
+        const message = {
+            context: {
+                conversation_id: this.clientId,
+                message_id: crypto.randomUUID(),
+                parent_id: null,
+                metadata: metadata
+            },
+            message_type: 'suggestion',
+            content: suggestion
+        };
+        
+        // Send directly without using sendMessage to customize metadata
+        return new Promise((resolve, reject) => {
+            if (!this.connected) {
+                this.hideProgress();
+                reject(new Error('Not connected to MCP server'));
+                return;
+            }
+            
+            const messageId = message.context.message_id;
+            const timeoutMs = 60000; // 60 second timeout for TDD processing
+            
+            // Add callback for response
+            const timeoutId = setTimeout(() => {
+                if (this.messageCallbacks.has(messageId)) {
+                    Logger.warn(`Timeout waiting for evaluation response`, 'mcp');
+                    this.messageCallbacks.delete(messageId);
+                    this.hideProgress();
+                    reject(new Error('Timeout waiting for evaluation response'));
+                }
+            }, timeoutMs);
+            
+            this.messageCallbacks.set(messageId, (response) => {
+                clearTimeout(timeoutId);
+                this.hideProgress();
+                
+                if (response.message_type === 'error') {
+                    const errorMsg = response.error || 'Unknown error';
+                    Logger.error(`MCP Error response: ${errorMsg}`, null, 'mcp');
+                    reject(new Error(errorMsg));
+                } else {
+                    Logger.debug(`Received evaluation response`, 'mcp');
+                    resolve(response);
+                }
+            });
+            
+            // Send message
+            const messageStr = JSON.stringify(message);
+            this.socket.send(messageStr);
+            Logger.debug(`Sent suggestion message: ${messageId}`, 'mcp');
+        });
+    } catch (error) {
+        this.hideProgress();
+        Logger.error(`Error sending suggestion: ${error.message}`, error, 'mcp');
+        throw error;
+    }
+};
+
+/**
+ * Show progress notification in VS Code
+ * @param {string} message The message to show
+ */
+MCPClient.prototype.showProgress = function(message) {
+    // Hide any existing progress first
+    this.hideProgress();
+    
+    // Create a new progress notification
+    this.progressNotification = vscode.window.setStatusBarMessage(`$(sync~spin) ${message}`);
+    
+    // Also show as notification if it's a longer operation
+    vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: message,
+        cancellable: false
+    }, async (progress) => {
+        // Initial progress
+        progress.report({ increment: 0 });
+        
+        // Update progress at intervals to show activity
+        let percent = 10;
+        const interval = setInterval(() => {
+            percent += 10;
+            if (percent > 90) {
+                percent = 90; // Max at 90% until complete
+            }
+            progress.report({ increment: 10, message: `Processing ${percent}%...` });
+        }, 2000);
+        
+        // Return a promise that resolves when the operation completes
+        return new Promise(resolve => {
+            // Store the cleanup function to be called by hideProgress
+            this._progressCleanup = () => {
+                clearInterval(interval);
+                resolve();
+            };
+        });
+    });
+};
+
+/**
+ * Hide any active progress notification
+ */
+MCPClient.prototype.hideProgress = function() {
+    if (this.progressNotification) {
+        this.progressNotification.dispose();
+        this.progressNotification = null;
+    }
+    
+    // Clean up any withProgress notification
+    if (this._progressCleanup) {
+        this._progressCleanup();
+        this._progressCleanup = null;
+    }
+};
+
+// Export the MCPClient class
 module.exports = MCPClient;

@@ -1,5 +1,21 @@
+// Required imports
+const vscode = require('vscode');
+const crypto = require('crypto');
+const Logger = require('./logger');
+// const httpRequest = require('./http_utils').httpRequest;
 // CopilotIntegration class import
 const CopilotIntegration = require('./copilot_integration');
+
+// Module-level variables
+let lastEvaluation = null;
+let retryTimeout = null;
+let mcpClient = null;
+let monitorEnabled = true;
+
+// Set MCP client reference
+function setMcpClient(client) {
+    mcpClient = client;
+}
 
 /**
  * Set up listeners for GitHub Copilot suggestions
@@ -19,33 +35,22 @@ async function setupCopilotListeners(context) {
     }
     
     // Register callback for when suggestions are detected
-    copilotIntegration.onSuggestionChange(async (suggestion) => {
-        Logger.info('Detected GitHub Copilot suggestion', 'copilot');
-        Logger.logObject('DEBUG', 'Suggestion details', suggestion, 'copilot');
-        
-        if (suggestion && monitorEnabled) {
-            const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
-            
-            // Automatically evaluate suggestion if enabled
-            if (config.get('autoEvaluate', true)) {
-                Logger.info('Auto-evaluating Copilot suggestion', 'copilot');
-                await evaluateSuggestion(suggestion);
-            } else {
-                Logger.info('Auto-evaluation disabled, suggestion stored for manual evaluation', 'copilot');
-                lastEvaluation = suggestion;
-                
-                // Show notification
-                vscode.window.showInformationMessage(
-                    'GitHub Copilot suggestion detected. Evaluate it?',
-                    'Evaluate', 'Ignore'
-                ).then(async (selection) => {
-                    if (selection === 'Evaluate') {
-                        await evaluateSuggestion(suggestion);
-                    }
-                });
-            }
-        }
-    });
+    // Check which method is actually available on the copilotIntegration object
+    if (typeof copilotIntegration.onSuggestionChange === 'function') {
+        copilotIntegration.onSuggestionChange(async (suggestion) => {
+            handleSuggestion(suggestion);
+        });
+    } else if (typeof copilotIntegration.registerSuggestionCallback === 'function') {
+        // Try alternative method name
+        copilotIntegration.registerSuggestionCallback(async (suggestion) => {
+            handleSuggestion(suggestion);
+        });
+    } else {
+        // Fallback if no appropriate method exists
+        Logger.error('No suggestion callback method found on CopilotIntegration', null, 'copilot');
+        vscode.window.showErrorMessage('Error setting up Copilot integration: suggestion monitoring unavailable');
+        return;
+    }
     
     // Store in context for cleanup
     context.subscriptions.push({
@@ -55,6 +60,37 @@ async function setupCopilotListeners(context) {
     });
     
     Logger.info('GitHub Copilot integration setup complete', 'copilot');
+}
+
+/**
+ * Handle a suggestion from Copilot
+ */
+function handleSuggestion(suggestion) {
+    Logger.info('Detected GitHub Copilot suggestion', 'copilot');
+    Logger.logObject('DEBUG', 'Suggestion details', suggestion, 'copilot');
+    
+    if (suggestion && monitorEnabled) {
+        const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
+        
+        // Automatically evaluate suggestion if enabled
+        if (config.get('autoEvaluate', true)) {
+            Logger.info('Auto-evaluating Copilot suggestion', 'copilot');
+            evaluateSuggestion(suggestion);
+        } else {
+            Logger.info('Auto-evaluation disabled, suggestion stored for manual evaluation', 'copilot');
+            lastEvaluation = suggestion;
+            
+            // Show notification
+            vscode.window.showInformationMessage(
+                'GitHub Copilot suggestion detected. Evaluate it?',
+                'Evaluate', 'Ignore'
+            ).then(selection => {
+                if (selection === 'Evaluate') {
+                    evaluateSuggestion(suggestion);
+                }
+            });
+        }
+    }
 }
 
 /**
@@ -563,3 +599,13 @@ async function retryEvaluation() {
         vscode.window.showErrorMessage(`Error retrying evaluation: ${error.message}`);
     }
 }
+
+// Export the functions that need to be accessible from other modules
+module.exports = {
+    setupCopilotListeners,
+    evaluateCopilotSuggestion,
+    acceptSuggestion,
+    rejectSuggestion,
+    retryEvaluation,
+    setMcpClient
+};
