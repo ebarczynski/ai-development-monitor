@@ -2,6 +2,28 @@
 
 All notable changes to the "AI Development Monitor" extension will be documented in this file.
 
+## [0.4.1] - 2025-04-23
+
+- Enhance GitHub Copilot Chat integration with intelligent duplicate suggestion detection
+- Improve debouncing mechanism in Copilot Chat integration (increased from 500ms to 1000ms)
+- Add suggestion caching with configurable timeout (default: 5000ms) to prevent duplicate logging
+- Implement robust message hashing for accurate duplicate detection
+- Fix issue with frequent duplicate logs of the same Copilot suggestions
+
+## [0.4.0] - 2025-04-22
+
+- Add dedicated monitoring panel (ai_monitor_panel.js) for visualizing evaluation results
+- Implement improved notification system with customizable verbosity levels
+- Fix WebSocket connection timeout issues in MCP client
+- Add robust error handling for server connection failures
+- Fix syntax error with reserved keyword 'eval' in monitoring panel
+- Improve URL construction for WebSocket connections
+- Add connection timeout to prevent indefinite hanging
+- Implement progress indicators for long-running operations
+- Enhance logging with more detailed error messages
+- Add configuration options for notification levels and panel display
+- Implement integrated modules (evaluation_display.js, chat_processor.js, suggestion_evaluator.js)
+
 ## [0.3.1] - 2025-04-21
 
 - Add Test-Driven Development (TDD) framework with 5-iteration workflow
@@ -12,13 +34,6 @@ All notable changes to the "AI Development Monitor" extension will be documented
 - Fix WebSocket connection stability issues with MCP server
 - Improve error handling in diagnostic test
 - Add tdd_extension.js module for TDD workflow management
-
-## [0.3.0] - 2025-04-19
-
-- Fix VS Code dependencies packaging with improved .vscodeignore configuration
-- Add copilot_handlers.js for proper integration between Copilot detection and MCP communication
-- Fix namespace and module import issues in the MCP integration
-- Improve log management system with more reliable communication
 - Add proper error handling for WebSocket connections
 - Enhance suggestion detection reliability
 
