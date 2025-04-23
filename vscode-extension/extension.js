@@ -3,10 +3,12 @@ const vscode = require('vscode');
 const https = require('https');
 const http = require('http');
 const MCPClient = require('./mcp_client');
+const OptimizedMCPClient = require('./optimized_mcp_client');
 const Logger = require('./logger');
 const CopilotIntegration = require('./copilot_integration');
 const CopilotChatIntegration = require('./copilot_chat_integration');
 const AIMonitorPanel = require('./ai_monitor_panel');
+const contextManager = require('./context_manager');
 // Import integration modules
 const evaluationDisplay = require('./evaluation_display');
 const chatProcessor = require('./chat_processor');
@@ -34,6 +36,11 @@ async function activate(context) {
     });
     
     Logger.info('AI Development Monitor is now active', 'system');
+    
+    // Initialize context manager with extension context
+    contextManager.initialize(context);
+    Logger.info('Context manager initialized with extension context', 'system');
+    
     console.log('MCPClient imported:', typeof MCPClient);
     // Initialize notification handler
     const NotificationHandler = require('./notification_handler');
@@ -88,12 +95,30 @@ async function activate(context) {
     
     // Initialize MCP client if enabled
     if (config.get('useMcp', true)) {
-        Logger.info('Initializing MCP client', 'mcp');
-        mcpClient = new MCPClient();
+        Logger.info('Initializing Optimized MCP client', 'mcp');
+        // Use the new optimized MCP client instead of the original one
+        mcpClient = new OptimizedMCPClient();
         try {
             await mcpClient.connect();
             connectionStatus = true;
-            Logger.info('Successfully connected to MCP server', 'mcp');
+            Logger.info('Successfully connected to MCP server with optimized client', 'mcp');
+            
+            // Add a statistics command to show optimization metrics
+            const showStatsCommand = vscode.commands.registerCommand('ai-development-monitor.showConnectionStats', () => {
+                const stats = mcpClient.getStatistics();
+                const panel = AIMonitorPanel.createOrShow(context);
+                panel.addLogEntry('Connection Statistics', 'info');
+                panel.addLogEntry(`Messages sent: ${stats.sent}, Received: ${stats.received}`, 'info');
+                panel.addLogEntry(`Total data sent: ${formatBytes(stats.totalBytesSent)}, Received: ${formatBytes(stats.totalBytesReceived)}`, 'info');
+                panel.addLogEntry(`Compressed messages: ${stats.compressed} (saved ${formatBytes(stats.savedBytes)})`, 'info');
+                panel.addLogEntry(`Compression ratio: ${stats.compressionRatio}`, 'info');
+                panel.addLogEntry(`Batched messages: ${stats.batched}`, 'info');
+                panel.addLogEntry(`Connection quality: ${stats.connectionQuality} (avg latency: ${stats.averageLatency?.toFixed(1) || 'unknown'}ms)`, 'info');
+                
+                vscode.window.showInformationMessage(`Connection Statistics: ${stats.compressionRatio} compression, ${stats.connectionQuality} connection quality`);
+            });
+            
+            context.subscriptions.push(showStatsCommand);
         } catch (error) {
             Logger.error('Failed to connect to MCP server', error, 'mcp');
             vscode.window.showWarningMessage('Failed to connect to MCP server. Falling back to REST API.');
@@ -134,6 +159,19 @@ async function activate(context) {
         
         // Set up callback to extract context when it changes
         copilotChatIntegration.onContextChange((context) => {
+            // Update central context manager with the new context
+            contextManager.updateContext({
+                taskDescription: context.taskDescription,
+                originalCode: context.originalCode,
+                proposedCode: context.proposedCode,
+                language: context.language,
+                sourceType: 'chat'
+            });
+            
+            // Log that we've updated the context manager
+            Logger.info('Context manager updated from Copilot Chat integration', 'context');
+            
+            // Also process the context through the chat processor for backward compatibility
             chatProcessor.processChatContext(context);
         });
         
@@ -303,75 +341,6 @@ function updateStatusBar() {
         statusBarItem.command = 'ai-development-monitor.enable';
     }
 }
-
-// /**
-//  * Set up event listeners for GitHub Copilot
-//  */
-// function setupCopilotListeners(context) {
-//     // Listen for inline suggestion events
-//     // This requires accessing internal Copilot APIs which may change over time
-    
-//     Logger.info('Setting up GitHub Copilot listeners', 'copilot');
-    
-//     // First, check if Copilot is installed
-//     const copilotExtension = vscode.extensions.getExtension('GitHub.copilot');
-//     if (!copilotExtension) {
-//         Logger.warn('GitHub Copilot extension not found. AI Development Monitor requires Copilot to function.', 'copilot');
-//         vscode.window.showWarningMessage('GitHub Copilot extension not found. AI Development Monitor requires Copilot to function.');
-//         return;
-//     }
-    
-//     Logger.info('GitHub Copilot extension found', 'copilot');
-    
-//     // Try to access Copilot API (this is experimental and may not work consistently)
-//     try {
-//         if (copilotExtension.isActive) {
-//             Logger.debug('Copilot extension is already active', 'copilot');
-//             setupCopilotApi(copilotExtension.exports);
-//         } else {
-//             Logger.debug('Activating Copilot extension', 'copilot');
-//             copilotExtension.activate().then(exports => {
-//                 setupCopilotApi(exports);
-//             }).catch(err => {
-//                 Logger.error('Failed to activate Copilot extension', err, 'copilot');
-//             });
-//         }
-//     } catch (error) {
-//         Logger.error('Error accessing Copilot API', error, 'copilot');
-//     }
-    
-//     // Set up API polling to check for suggestions as fallback
-//     Logger.info('Setting up suggestion polling as fallback', 'copilot');
-//     const suggestionCheckInterval = setInterval(async () => {
-//         if (!monitorEnabled || !connectionStatus) {
-//             return;
-//         }
-        
-//         try {
-//             // Check for visual indicators of active suggestions
-//             const editor = vscode.window.activeTextEditor;
-//             if (!editor) {
-//                 return;
-//             }
-            
-//             // Check for Copilot's ghost text decorations
-//             // This is a heuristic approach that might not always work
-//             const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
-//             if (config.get('autoEvaluate', true)) {
-//                 // Look for changes in the document that might indicate a suggestion
-//                 // For now, this just serves as a placeholder for more sophisticated detection
-//                 Logger.trace('Checking for Copilot suggestions', 'copilot');
-//             }
-            
-//             // Auto-continuation for errors or timeouts
-//             handleAutoContinuation();
-//         } catch (error) {
-//             Logger.error('Error in suggestion polling', error, 'copilot');
-//         }
-//     }, 1000);
-    
-//     context.subscriptions.push({ dispose: () => clearInterval(suggestionCheckInterval) });
-// }
 
 /**
  * Set up access to GitHub Copilot API if available
@@ -550,8 +519,33 @@ async function evaluateCopilotSuggestion() {
             const fileType = document.languageId;
             const fileName = document.fileName;
             
-            // Get task description (for now, use filename and language)
-            const taskDescription = `Implement functionality in ${fileName} using ${fileType}`;
+            // Try to get the task description from Copilot Chat if available
+            let taskDescription;
+            let taskDescriptionSource = 'unknown';
+            
+            if (copilotChatIntegration && copilotChatIntegration.isAvailable) {
+                const extractedContext = copilotChatIntegration.getExtractedContext();
+                if (extractedContext && extractedContext.taskDescription) {
+                    taskDescription = extractedContext.taskDescription;
+                    taskDescriptionSource = extractedContext.sourceType || 'chat';
+                    
+                    // Remove any visual indicators we might have added for debugging purposes
+                    if (taskDescription.startsWith('[CHAT QUERY] ')) {
+                        taskDescription = taskDescription.substring(13);
+                    } else if (taskDescription.startsWith('[EDITOR CONTENT] ')) {
+                        taskDescription = taskDescription.substring(17);
+                    }
+                    
+                    Logger.debug(`Using task description from Copilot Chat (source: ${taskDescriptionSource}): ${taskDescription.substring(0, 50)}...`, 'evaluation');
+                }
+            }
+            
+            // Fall back to a basic description if nothing was extracted from chat
+            if (!taskDescription) {
+                taskDescription = `Modify code in ${fileName} using ${fileType}`;
+                taskDescriptionSource = 'fallback';
+                Logger.debug(`Using generic task description: ${taskDescription}`, 'evaluation');
+            }
             
             let response;
             
@@ -867,6 +861,15 @@ async function sendContinueCommand() {
 
 // This method is called when your extension is deactivated
 function deactivate() {
+    // Clean up resources
+    if (mcpClient) {
+        // If we're using the optimized client, it has a proper disposal method
+        if (typeof mcpClient.dispose === 'function') {
+            mcpClient.dispose();
+        }
+        mcpClient = null;
+    }
+    
     // Clear any timeouts
     if (retryTimeout) {
         clearTimeout(retryTimeout);
@@ -878,6 +881,19 @@ function deactivate() {
     }
     
     console.log('AI Development Monitor is now deactivated');
+}
+
+/**
+ * Format bytes to human-readable format
+ * @param {number} bytes Number of bytes to format
+ * @returns {string} Human-readable string
+ */
+function formatBytes(bytes) {
+    if (!bytes || bytes === 0) return '0 Bytes';
+    
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${sizes[i]}`;
 }
 
 module.exports = {

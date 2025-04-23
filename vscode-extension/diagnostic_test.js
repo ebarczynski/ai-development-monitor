@@ -6,6 +6,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const tddExtension = require('./tdd_extension');
+const OptimizedMCPClient = require('./optimized_mcp_client');
 
 /**
  * Diagnostic test function to check extension capabilities
@@ -310,6 +311,140 @@ async function runDiagnosticTests() {
         outputChannel.appendLine('⚠️ GitHub Copilot Chat extension not active');
     }
     
+    // Test 7: Test Optimized MCP Client communication features
+    outputChannel.appendLine('');
+    outputChannel.appendLine('Test 7: Testing Optimized MCP Client communication features...');
+    
+    if (!config.get('useMcp', false)) {
+        outputChannel.appendLine('⚠️ MCP is disabled in settings. Enable it to test the optimized client.');
+    } else {
+        try {
+            // Initialize the optimized client
+            const optimizedClient = new OptimizedMCPClient();
+            outputChannel.appendLine('✅ Optimized MCP Client instantiated');
+            
+            // Connect to the server
+            await optimizedClient.connect();
+            outputChannel.appendLine('✅ Connected to MCP server with optimized client');
+            
+            // Test 7.1: Test compression with a large message
+            outputChannel.appendLine('\nTest 7.1: Testing message compression...');
+            
+            // Create a large payload to ensure compression is triggered
+            const largeContent = {
+                code: generateLargeCode(5000), // Generate large code content to trigger compression
+                language: "javascript",
+                iteration: 1,
+                task_description: "Testing compression with a large message payload",
+                original_code: "",
+                max_iterations: 2 // Reduce to 2 iterations for faster diagnostics
+            };
+            
+            // Set a longer timeout for TDD operations
+            const tddTimeout = 180000; // 3 minutes for TDD operations
+            
+            try {
+                outputChannel.appendLine('Sending large message to test compression...');
+                outputChannel.appendLine('This may take up to 3 minutes for the backend to process.');
+                
+                const startTime = Date.now();
+                const compressionResponse = await Promise.race([
+                    optimizedClient.sendMessage('tdd_request', largeContent, null),
+                    new Promise((_, reject) => setTimeout(() => 
+                        reject(new Error('Operation timed out after 3 minutes')), tddTimeout))
+                ]);
+                const compressionTime = Date.now() - startTime;
+                
+                outputChannel.appendLine(`✅ Request completed in ${compressionTime}ms`);
+                outputChannel.appendLine('Response received from backend:');
+                outputChannel.appendLine(JSON.stringify(compressionResponse, null, 2).substring(0, 500) + '...');
+                
+                // Get statistics to verify compression worked
+                const stats = optimizedClient.getStatistics();
+                outputChannel.appendLine('Compression statistics:');
+                outputChannel.appendLine(`- Messages compressed: ${stats.compressed}`);
+                outputChannel.appendLine(`- Compression ratio: ${stats.compressionRatio}`);
+                outputChannel.appendLine(`- Bytes saved: ${formatBytes(stats.savedBytes)}`);
+                
+                if (stats.compressed > 0 && stats.savedBytes > 0) {
+                    outputChannel.appendLine('✅ Message compression is working properly');
+                } else {
+                    outputChannel.appendLine('⚠️ Message compression may not be functioning as expected');
+                }
+            } catch (error) {
+                outputChannel.appendLine(`⚠️ Large message test timed out or failed: ${error.message}`);
+                outputChannel.appendLine('Continuing with other tests...');
+            }
+            
+            // Test 7.2: Test message batching
+            outputChannel.appendLine('\nTest 7.2: Testing message batching...');
+            
+            // Send multiple small messages quickly to trigger batching
+            const batchPromises = [];
+            const batchCount = 3;
+            
+            for (let i = 0; i < batchCount; i++) {
+                const smallContent = {
+                    message: `Test batch message ${i + 1}`,
+                    timestamp: Date.now(),
+                    index: i
+                };
+                
+                // Use evaluation message type instead of ping (which is not supported by server)
+                batchPromises.push(optimizedClient.sendMessage('evaluation', smallContent, null, 1)); // 1 = MEDIUM priority
+            }
+            
+            // Wait for all messages to complete
+            await Promise.all(batchPromises);
+            
+            // Check batching statistics
+            const batchStats = optimizedClient.getStatistics();
+            outputChannel.appendLine(`Messages batched: ${batchStats.batched}`);
+            
+            if (batchStats.batched > 0) {
+                outputChannel.appendLine('✅ Message batching is working properly');
+            } else {
+                outputChannel.appendLine('⚠️ Message batching may not be functioning as expected');
+            }
+            
+            // Test 7.3: Test connection quality monitoring
+            outputChannel.appendLine('\nTest 7.3: Testing connection quality monitoring...');
+            
+            // Measure connection quality
+            try {
+                // Just check if the connection quality stats are available
+                const qualityStats = optimizedClient.getStatistics();
+                
+                outputChannel.appendLine(`Connection quality: ${qualityStats.connectionQuality || 'unknown'}`);
+                outputChannel.appendLine(`Average latency: ${qualityStats.averageLatency?.toFixed(1) || 'unknown'}ms`);
+                
+                if (qualityStats.connectionQuality && qualityStats.connectionQuality !== 'unknown') {
+                    outputChannel.appendLine('✅ Connection quality monitoring is working properly');
+                } else {
+                    outputChannel.appendLine('⚠️ Connection quality monitoring may not be functioning as expected');
+                }
+            } catch (error) {
+                outputChannel.appendLine(`⚠️ Error measuring connection quality: ${error.message}`);
+            }
+            
+            // Display overall optimization results
+            outputChannel.appendLine('\nOptimized MCP Client Overall Statistics:');
+            outputChannel.appendLine(`- Total messages sent: ${qualityStats.sent}`);
+            outputChannel.appendLine(`- Total messages received: ${qualityStats.received}`);
+            outputChannel.appendLine(`- Total bytes sent: ${formatBytes(qualityStats.totalBytesSent)}`);
+            outputChannel.appendLine(`- Total bytes received: ${formatBytes(qualityStats.totalBytesReceived)}`);
+            outputChannel.appendLine(`- Compression ratio: ${qualityStats.compressionRatio}`);
+            
+            // Clean up resources
+            optimizedClient.dispose();
+            outputChannel.appendLine('✅ Optimized MCP Client resources released');
+            
+        } catch (error) {
+            outputChannel.appendLine(`❌ Error testing optimized MCP client: ${error.message}`);
+            outputChannel.appendLine(error.stack);
+        }
+    }
+    
     // Completion message
     outputChannel.appendLine('');
     outputChannel.appendLine('=== Diagnostic Tests Completed ===');
@@ -319,3 +454,63 @@ async function runDiagnosticTests() {
 module.exports = {
     runDiagnosticTests
 };
+
+/**
+ * Format bytes to human-readable format
+ * @param {number} bytes Number of bytes to format
+ * @returns {string} Human-readable string
+ */
+function formatBytes(bytes) {
+    if (!bytes || bytes === 0) return '0 Bytes';
+    
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${sizes[i]}`;
+}
+
+/**
+ * Generate large code content for testing compression
+ * @param {number} size Approximate size in characters
+ * @returns {string} Large code content
+ */
+function generateLargeCode(size) {
+    let code = '/**\n * This is a large function to test compression\n * with repeated content to ensure good compression ratios\n */\n\n';
+    
+    // Add function declaration
+    code += 'function processLargeDataSet(data) {\n';
+    code += '  const results = [];\n';
+    code += '  const cache = new Map();\n\n';
+    
+    // Generate repetitive code to get good compression
+    while (code.length < size) {
+        code += '  // Process the data with multiple steps\n';
+        code += '  for (let i = 0; i < data.length; i++) {\n';
+        code += '    const item = data[i];\n';
+        code += '    if (cache.has(item.id)) {\n';
+        code += '      results.push(cache.get(item.id));\n';
+        code += '      continue;\n';
+        code += '    }\n\n';
+        code += '    const processed = {\n';
+        code += '      id: item.id,\n';
+        code += '      name: item.name,\n';
+        code += '      value: item.value * 2,\n';
+        code += '      timestamp: Date.now(),\n';
+        code += '      processed: true,\n';
+        code += '      metadata: {\n';
+        code += '        source: "compression-test",\n';
+        code += '        version: "1.0.0",\n';
+        code += '        complexity: "high",\n';
+        code += '        author: "diagnostic-test"\n';
+        code += '      }\n';
+        code += '    };\n\n';
+        code += '    cache.set(item.id, processed);\n';
+        code += '    results.push(processed);\n';
+        code += '  }\n\n';
+    }
+    
+    code += '  return results;\n';
+    code += '}\n\n';
+    code += 'module.exports = processLargeDataSet;';
+    
+    return code;
+}

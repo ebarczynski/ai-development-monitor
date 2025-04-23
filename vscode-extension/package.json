@@ -2,7 +2,7 @@
   "name": "ai-development-monitor",
   "displayName": "AI Development Monitor",
   "description": "Monitor and evaluate GitHub Copilot suggestions",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "publisher": "local-publisher",
   "license": "MIT",
   "repository": {

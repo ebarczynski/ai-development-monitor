@@ -25,7 +25,8 @@ class MCPClient {
         this.enhancedContext = {
             taskDescription: "",
             originalCode: "",
-            language: ""
+            language: "",
+            sourceType: "" // Add source type to track where the context came from
         };
         
         // Progress notification
@@ -336,6 +337,46 @@ class MCPClient {
             this.connectionPromise = null;
         }
     }
+    
+    /**
+     * Update enhanced context with Copilot Chat data
+     * This is a crucial method for task description handling
+     * @param {Object} context The context data from Copilot Chat
+     */
+    updateEnhancedContext(context) {
+        if (!context) return;
+        
+        // Clean up any visual indicators from task description if present
+        let taskDescription = context.taskDescription || this.enhancedContext.taskDescription;
+        if (taskDescription) {
+            // Remove visual indicators if present
+            if (taskDescription.startsWith('[CHAT QUERY] ')) {
+                taskDescription = taskDescription.substring(13);
+            } else if (taskDescription.startsWith('[EDITOR CONTENT] ')) {
+                taskDescription = taskDescription.substring(17);
+            }
+        }
+        
+        // Store the enhanced context from Copilot Chat
+        this.enhancedContext = {
+            taskDescription: taskDescription,
+            originalCode: context.originalCode || this.enhancedContext.originalCode,
+            language: context.language || this.enhancedContext.language,
+            sourceType: context.sourceType || this.enhancedContext.sourceType || 'unknown'
+        };
+        
+        // Log the enhanced context update with detailed information
+        Logger.debug(`Enhanced context updated from ${this.enhancedContext.sourceType} source`, 'mcp');
+        if (taskDescription) {
+            Logger.debug(`Task description: ${taskDescription.substring(0, 50)}...`, 'mcp');
+        }
+        if (this.enhancedContext.originalCode) {
+            Logger.debug(`Original code: ${this.enhancedContext.originalCode.length} chars`, 'mcp');
+        }
+        if (this.enhancedContext.language) {
+            Logger.debug(`Language: ${this.enhancedContext.language}`, 'mcp');
+        }
+    }
 }
 
 /**
@@ -343,12 +384,8 @@ class MCPClient {
  * @param {Object} context Enhanced context with taskDescription, originalCode, etc
  */
 MCPClient.prototype.setEnhancedContext = function(context) {
-    this.enhancedContext = {
-        ...this.enhancedContext,
-        ...context
-    };
-    
-    Logger.debug(`Enhanced context updated: ${JSON.stringify(this.enhancedContext)}`, 'mcp');
+    // Use our improved updateEnhancedContext method
+    this.updateEnhancedContext(context);
 };
 
 /**
@@ -362,8 +399,13 @@ MCPClient.prototype.sendSuggestion = async function(suggestion) {
         this.showProgress("Evaluating code suggestion...");
         
         // Enhance suggestion with chat context if available
-        if (this.enhancedContext.taskDescription && !suggestion.task_description) {
+        if (this.enhancedContext.taskDescription && (!suggestion.task_description || 
+            suggestion.task_description.includes("Modify code in") || 
+            suggestion.task_description.includes("Implement functionality"))) {
+            
+            // Only replace generic descriptions with our better ones
             suggestion.task_description = this.enhancedContext.taskDescription;
+            Logger.info(`Using enhanced task description: ${suggestion.task_description.substring(0, 50)}...`, 'mcp');
         }
         
         if (this.enhancedContext.language && !suggestion.language) {
@@ -382,7 +424,8 @@ MCPClient.prototype.sendSuggestion = async function(suggestion) {
         const metadata = {
             run_tdd: true,
             max_iterations: 5, // Default to 5 iterations
-            source: suggestion.source || 'copilot_chat'
+            source: suggestion.source || this.enhancedContext.sourceType || 'copilot_chat',
+            task_description: suggestion.task_description // Duplicate task description in metadata for TDD
         };
         
         // Create message with enhanced metadata
@@ -499,6 +542,26 @@ MCPClient.prototype.hideProgress = function() {
         this._progressCleanup();
         this._progressCleanup = null;
     }
+};
+
+/**
+ * Make evaluateSuggestion available as a prototype method for compatibility
+ * This resolves the "mcpClient.evaluateSuggestion is not a function" error
+ */
+MCPClient.prototype.evaluateSuggestion = async function(originalCode, proposedChanges, taskDescription, filePath = null, language = null) {
+    Logger.debug('Using evaluateSuggestion prototype method', 'mcp');
+    
+    // Create a suggestion object from the parameters
+    const suggestion = {
+        original_code: originalCode,
+        proposed_changes: proposedChanges,
+        task_description: taskDescription,
+        file_path: filePath,
+        language: language
+    };
+    
+    // Use our sendSuggestion method to handle the evaluation
+    return this.sendSuggestion(suggestion);
 };
 
 // Export the MCPClient class

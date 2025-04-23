@@ -9,6 +9,9 @@ import logging
 from typing import Dict, Any, Optional, Union
 from fastapi import WebSocket
 from pydantic import BaseModel
+from src.language_test_templates import get_language_specific_template
+from src.enhanced_tdd_templates import enhance_tdd_prompt, get_enhanced_fallback_tests
+from src.adaptive_test_generation import enhance_test_prompt_with_adaptive_strategy
 
 # Import from MCP server
 # These need to be imported here to avoid circular imports
@@ -90,6 +93,12 @@ async def handle_tdd_request(message, websocket: WebSocket):
     
     # Create prompt for the LLM
     prompt = create_tdd_test_prompt(code, language, iteration, test_purpose, task_description, original_code, max_iterations)
+    
+    # Enhance the prompt with language-specific templates
+    prompt = enhance_tdd_prompt(prompt, language, iteration, code, task_description, original_code)
+    
+    # Further enhance with adaptive test generation strategies
+    prompt = enhance_test_prompt_with_adaptive_strategy(prompt, code, language, task_description, iteration, max_iterations)
     
     # Generate tests using LLM
     generated_tests = ""
@@ -258,24 +267,21 @@ def generate_fallback_tests(code, language, iteration, task_description=""):
 # Fallback tests for iteration {iteration}{task_comment}
 import pytest
 
-def test_factorial_exists():
-    # Verify the function exists
-    assert callable(factorial)
-
-def test_factorial_base_cases():
-    # Test base cases
-    assert factorial(0) == 1
-    assert factorial(1) == 1
-
-def test_factorial_normal_cases():
-    # Test with known values
-    assert factorial(5) == 120
-    assert factorial(10) == 3628800
-
-def test_factorial_error_handling():
-    # Test error handling
-    with pytest.raises(ValueError):
-        factorial(-1)
+def test_code_functionality():
+    # Basic test to verify the code runs
+    # Modify this test according to the actual functionality
+    
+    # This is a generic test scaffold - ideally these tests would be
+    # generated specifically for the task: "{task_description}"
+    
+    # Some basic assertions that should be adapted for the specific code:
+    assert True  # Replace with actual test for the function
+    
+    # Examples of common test patterns (modify for your specific code):
+    # 1. Check function exists (if applicable)
+    # 2. Test basic functionality with simple inputs
+    # 3. Test edge cases
+    # 4. Test error handling
 """
     else:
         # JavaScript fallback
@@ -284,21 +290,22 @@ def test_factorial_error_handling():
 // Fallback tests for iteration {iteration}{task_comment}
 const assert = require('assert');
 
-describe('Factorial Function', () => {{
-  it('should return 1 for input of 0', () => {{
-    assert.equal(factorial(0), 1);
+describe('Code Functionality', () => {{
+  // Basic test to verify the code runs
+  // Modify this test according to the actual functionality
+  
+  // This is a generic test scaffold - ideally these tests would be
+  // generated specifically for the task: "{task_description}"
+  
+  it('should execute without errors', () => {{
+    // Replace with actual test for your specific code
+    assert.equal(true, true);
   }});
   
-  it('should return 1 for input of 1', () => {{
-    assert.equal(factorial(1), 1);
-  }});
-  
-  it('should return 120 for input of 5', () => {{
-    assert.equal(factorial(5), 120);
-  }});
-  
-  it('should handle negative inputs appropriately', () => {{
-    assert.throws(() => factorial(-1), Error);
-  }});
+  // Examples of common test patterns (modify for your specific code):
+  // 1. Check function exists (if applicable)
+  // 2. Test basic functionality with simple inputs 
+  // 3. Test edge cases
+  // 4. Test error handling
 }});
 """

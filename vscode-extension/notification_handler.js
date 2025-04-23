@@ -62,13 +62,27 @@ class NotificationHandler {
         }
         
         const accept = evaluation.accept;
-        const title = accept ? 'Code suggestion accepted' : 'Code suggestion rejected';
+        
+        // Extract test information if available
+        const testsPassing = evaluation.tests_passing || 0;
+        const testsTotal = evaluation.tests_total || 0;
+        const testInfo = (testsTotal > 0) ? 
+            ` | Tests: ${testsPassing}/${testsTotal} passing` : '';
+            
         const tddScore = evaluation.tdd_score !== undefined ? 
             ` | TDD Score: ${Math.round(evaluation.tdd_score * 100)}%` : '';
             
-        const message = `${title} - ${evaluation.reason.substring(0, 100)}${evaluation.reason.length > 100 ? '...' : ''}`;
+        const title = accept ? 'Code suggestion accepted' : 'Code suggestion rejected';
+            
+        const message = `${title} - ${evaluation.reason.substring(0, 80)}${evaluation.reason.length > 80 ? '...' : ''}${testInfo}${tddScore}`;
         
-        const actions = ['Show Details', 'Dismiss'];
+        // Include Accept/Reject buttons in addition to Show Details
+        const actions = [
+            ...(suggestionData ? ['Accept', 'Reject'] : []), 
+            'Show Details', 
+            ...(evaluation.test_scenarios ? ['View Tests'] : []),
+            'Dismiss'
+        ];
         
         const selection = accept ? 
             await this.showInfo(message, actions) :
@@ -78,6 +92,75 @@ class NotificationHandler {
             // Show details in the monitor panel
             const panel = AIMonitorPanel.createOrShow(this._extensionContext);
             panel.setEvaluationResults(evaluation);
+        } else if (selection === 'Accept' && suggestionData) {
+            // Trigger the accept action for the suggestion
+            if (suggestionData.acceptCallback) {
+                Logger.info('User accepted suggestion via notification', 'notification');
+                await suggestionData.acceptCallback();
+            }
+        } else if (selection === 'Reject' && suggestionData) {
+            // Trigger the reject action for the suggestion
+            if (suggestionData.rejectCallback) {
+                Logger.info('User rejected suggestion via notification', 'notification');
+                await suggestionData.rejectCallback();
+            }
+        } else if (selection === 'View Tests' && evaluation.test_scenarios) {
+            // Show test scenarios in a new document
+            this.showTestScenarios(evaluation.test_scenarios);
+        }
+    }
+    
+    /**
+     * Display test scenarios in a new editor window
+     * @param {Array|Object} testScenarios The test scenarios to display
+     */
+    async showTestScenarios(testScenarios) {
+        try {
+            // Convert test scenarios to displayable format
+            let content = '# Test Scenarios\n\n';
+            
+            if (Array.isArray(testScenarios)) {
+                testScenarios.forEach((scenario, index) => {
+                    content += `## Scenario ${index + 1}: ${scenario.title || 'Untitled'}\n\n`;
+                    if (scenario.description) content += `${scenario.description}\n\n`;
+                    if (scenario.code) content += `\`\`\`\n${scenario.code}\n\`\`\`\n\n`;
+                    
+                    // Add pass/fail status if available
+                    if (scenario.status) {
+                        const statusIcon = scenario.status === 'pass' ? '✅' : '❌';
+                        content += `**Status**: ${statusIcon} ${scenario.status.toUpperCase()}\n\n`;
+                    }
+                });
+            } else if (typeof testScenarios === 'object') {
+                // Handle case where test scenarios is an object with named scenarios
+                Object.keys(testScenarios).forEach(key => {
+                    const scenario = testScenarios[key];
+                    content += `## ${key}\n\n`;
+                    if (scenario.description) content += `${scenario.description}\n\n`;
+                    if (scenario.code) content += `\`\`\`\n${scenario.code}\n\`\`\`\n\n`;
+                    
+                    // Add pass/fail status if available
+                    if (scenario.status) {
+                        const statusIcon = scenario.status === 'pass' ? '✅' : '❌';
+                        content += `**Status**: ${statusIcon} ${scenario.status.toUpperCase()}\n\n`;
+                    }
+                });
+            } else {
+                content += 'No test scenarios available.';
+            }
+            
+            // Create a new untitled document with the content
+            const document = await vscode.workspace.openTextDocument({
+                content,
+                language: 'markdown'
+            });
+            
+            await vscode.window.showTextDocument(document);
+            Logger.info('Displayed test scenarios in new document', 'notification');
+            
+        } catch (error) {
+            Logger.error(`Error showing test scenarios: ${error.message}`, error, 'notification');
+            await this.showError(`Failed to display test scenarios: ${error.message}`);
         }
     }
 

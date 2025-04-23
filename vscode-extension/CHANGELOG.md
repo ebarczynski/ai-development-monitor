@@ -2,6 +2,15 @@
 
 All notable changes to the "AI Development Monitor" extension will be documented in this file.
 
+## [0.4.2] - 2025-04-25
+
+- Add missing `evaluateSuggestion` method to OptimizedMCPClient for proper suggestion evaluation
+- Fix message batching and connection quality testing in diagnostic tools
+- Enhance context manager integration with improved two-way communication
+- Fix VS Code Memento handling in context_manager.js
+- Add task description editing functionality to context manager
+- Improve cleanup in dispose() methods for better resource management
+
 ## [0.4.1] - 2025-04-23
 
 - Enhance GitHub Copilot Chat integration with intelligent duplicate suggestion detection

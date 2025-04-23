@@ -123,7 +123,20 @@ class MonitorAPIHandler(BaseHTTPRequestHandler):
         # Required fields
         original_code = data.get('original_code', '')
         proposed_changes = data.get('proposed_changes', '')
-        task_description = data.get('task_description', 'Implement functionality')
+        task_description = data.get('task_description', '')
+        
+        # If task_description is empty, try to get it from context or metadata
+        if not task_description and 'context' in data:
+            context = data.get('context', {})
+            if isinstance(context, dict):
+                # Try to get from metadata
+                metadata = context.get('metadata', {})
+                if isinstance(metadata, dict):
+                    task_description = metadata.get('task_description', '')
+        
+        # Only use default if we still have no task description
+        if not task_description:
+            task_description = "Unknown task"
         
         # Evaluate the changes
         accept, evaluation = agent.evaluate_proposed_changes(

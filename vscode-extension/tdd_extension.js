@@ -8,6 +8,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
+const contextManager = require('./context_manager');
 
 /**
  * Run a TDD testing cycle with multiple iterations
@@ -96,7 +97,7 @@ async function runTDDCycle(outputChannel, webSocketConnection, conversationId, s
                             // Send next TDD request
                             setTimeout(() => {
                                 sendTDDRequest(webSocketConnection, conversationId, currentCode, language, iteration + 1, outputChannel);
-                            }, 2000);
+                            }, 60000);
                         } else {
                             // Final summary
                             outputChannel.appendLine('\n=== TDD Cycle Complete ===');
@@ -164,6 +165,43 @@ function sendTDDRequest(ws, conversationId, code, language, iteration, outputCha
         outputChannel.appendLine(`\n--- TDD Iteration ${iteration} ---`);
         outputChannel.appendLine('Sending TDD test generation request to MCP server...');
         
+        // Clean up task description if it contains visual indicators
+        if (taskDescription) {
+            if (taskDescription.startsWith('[CHAT QUERY] ')) {
+                taskDescription = taskDescription.substring(13);
+            } else if (taskDescription.startsWith('[EDITOR CONTENT] ')) {
+                taskDescription = taskDescription.substring(17);
+            }
+            
+            // Don't use generic descriptions
+            if (taskDescription.includes("Modify code in") || 
+                taskDescription.includes("Implement functionality")) {
+                outputChannel.appendLine('⚠️ Warning: Generic task description detected, attempting to get better description');
+                
+                // Try to get from Context Manager first
+                const contextFromManager = contextManager.getContext();
+                if (contextFromManager.taskDescription) {
+                    taskDescription = contextFromManager.taskDescription;
+                    outputChannel.appendLine(`Using task description from Context Manager: ${taskDescription}`);
+                } else {
+                    // Fall back to extracting from code
+                    taskDescription = extractMeaningfulDescription(code, language);
+                }
+            }
+        } else {
+            // If no task description provided, try to get from Context Manager first
+            const contextFromManager = contextManager.getContext();
+            if (contextFromManager.taskDescription) {
+                taskDescription = contextFromManager.taskDescription;
+                outputChannel.appendLine(`Using task description from Context Manager: ${taskDescription}`);
+            } else {
+                // Fall back to inferring from code
+                taskDescription = extractMeaningfulDescription(code, language);
+            }
+        }
+        
+        outputChannel.appendLine(`Task Description: ${taskDescription}`);
+        
         // Create a message for test generation
         const message = {
             context: {
@@ -195,6 +233,55 @@ function sendTDDRequest(ws, conversationId, code, language, iteration, outputCha
     } catch (error) {
         outputChannel.appendLine(`❌ Error sending TDD request: ${error.message}`);
     }
+}
+
+/**
+ * Try to extract a meaningful description from the code if no task description is provided
+ */
+function extractMeaningfulDescription(code, language) {
+    // Default fallback
+    let extractedDescription = "Verify the code behaves correctly";
+    
+    try {
+        // Look for function/class names and docstrings
+        if (language === 'python') {
+            // Check for docstrings
+            const docstringMatch = code.match(/"""(.*?)"""/s) || code.match(/'''(.*?)'''/s);
+            if (docstringMatch && docstringMatch[1]) {
+                const docstring = docstringMatch[1].trim();
+                if (docstring.length > 10) { // Minimum meaningful length
+                    return docstring.split('\n')[0]; // Use first line of docstring
+                }
+            }
+            
+            // Check for function definitions
+            const funcMatch = code.match(/def\s+([a-zA-Z0-9_]+)\s*\(/);
+            if (funcMatch && funcMatch[1]) {
+                return `Test the ${funcMatch[1]} function`;
+            }
+        } else if (language === 'javascript' || language === 'typescript') {
+            // Check for JSDoc comments
+            const jsdocMatch = code.match(/\/\*\*\s*(.*?)\s*\*\//s);
+            if (jsdocMatch && jsdocMatch[1]) {
+                const jsdoc = jsdocMatch[1].replace(/\s*\*\s*/g, ' ').trim();
+                if (jsdoc.length > 10) {
+                    return jsdoc.split('\n')[0]; // Use first line of JSDoc
+                }
+            }
+            
+            // Check for function/class definitions
+            const funcMatch = code.match(/function\s+([a-zA-Z0-9_]+)\s*\(/) || 
+                             code.match(/class\s+([a-zA-Z0-9_]+)/) ||
+                             code.match(/const\s+([a-zA-Z0-9_]+)\s*=\s*\(/);
+            if (funcMatch && funcMatch[1]) {
+                return `Test the ${funcMatch[1]} function/class`;
+            }
+        }
+    } catch (error) {
+        // Silently fail and use the default
+    }
+    
+    return extractedDescription;
 }
 
 /**

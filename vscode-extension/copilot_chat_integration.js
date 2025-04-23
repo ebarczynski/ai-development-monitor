@@ -8,6 +8,7 @@ const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
 const Logger = require('./logger');
+const contextManager = require('./context_manager');
 
 class CopilotChatIntegration {
     constructor() {
@@ -22,6 +23,11 @@ class CopilotChatIntegration {
         this.lastProcessedSuggestion = null;
         this.suggestionCache = new Set(); // Cache to track processed suggestions
         this.suggestionCacheTimeout = 5000; // Time in ms to keep suggestions in cache
+        
+        // Register as a listener for context changes from other sources
+        this.contextChangeUnsubscribe = contextManager.registerListener(this.handleContextChange.bind(this));
+        
+        Logger.debug('CopilotChatIntegration initialized and registered with context manager', 'copilot-chat');
     }
 
     /**
@@ -40,6 +46,7 @@ class CopilotChatIntegration {
                 this.isAvailable = false;
                 return false;
             }
+
             
             Logger.info('GitHub Copilot Chat extension found', 'copilot-chat');
             
@@ -47,6 +54,7 @@ class CopilotChatIntegration {
             if (!this.copilotChatExtension.isActive) {
                 Logger.debug('Activating GitHub Copilot Chat extension', 'copilot-chat');
                 await this.copilotChatExtension.activate();
+                
                 Logger.info('GitHub Copilot Chat extension activated', 'copilot-chat');
             }
             
@@ -338,13 +346,36 @@ class CopilotChatIntegration {
                 }
             }
             
-            // If we find a task description, add it to our context
-            if (taskDescription) {
-                this.lastExtractedContext.taskDescription = taskDescription;
-                this.lastExtractedContext.language = language;
-                this.lastExtractedContext.code = text;
+            // If we find a task description, add it to our context BUT only if we don't already have a better one
+            // from actual chat messages (prioritize chat queries over editor selections or comments)
+            if (taskDescription && !this.lastExtractedContext.taskDescription) {
+                // Create context update with editor content
+                const newContext = {
+                    taskDescription: `[EDITOR CONTENT] ${taskDescription}`, // Mark as editor content with visual indicator
+                    language: language,
+                    code: text,
+                    sourceType: 'editor', // Add source type for tracking
+                    timestamp: new Date().toISOString()
+                };
+                
+                // Update our centralized context manager
+                contextManager.updateContext(newContext);
+                
+                // Also keep local copy for backward compatibility
+                this.lastExtractedContext = newContext;
                 
                 Logger.debug(`Extracted task description from editor: ${taskDescription.substring(0, 50)}...`, 'copilot-chat');
+                Logger.debug('Note: This description from editor content will be overridden if a chat query is found', 'copilot-chat');
+                
+                // Show notification to user that we're using editor content as fallback
+                vscode.window.showInformationMessage(
+                    'Using editor content as task description. This will be replaced if a Copilot Chat query is found.',
+                    'View Details'
+                ).then(selection => {
+                    if (selection === 'View Details') {
+                        this.showExtractedContext();
+                    }
+                });
                 
                 // Notify listeners
                 this.notifyContextChange();
@@ -377,51 +408,116 @@ class CopilotChatIntegration {
             let proposedCode = '';
             let language = '';
             
-            // Process chat history to extract context
-            for (let i = 0; i < this.chatHistoryCache.length; i++) {
-                const message = this.chatHistoryCache[i];
+            // Find the most relevant user query and assistant response pairs
+            for (let i = 0; i < this.chatHistoryCache.length - 1; i++) {
+                const currentMessage = this.chatHistoryCache[i];
+                const nextMessage = this.chatHistoryCache[i + 1];
                 
-                // Check for task description in user messages
-                if (message.role === 'user') {
-                    // If no task description yet, use this message
-                    if (!taskDescription) {
-                        taskDescription = message.content;
+                // Look for a user message followed by an assistant message with code
+                if (currentMessage.role === 'user' && 
+                    nextMessage.role === 'assistant' && 
+                    nextMessage.codeBlocks && 
+                    nextMessage.codeBlocks.length > 0) {
+                    
+                    // This is likely a query that led to a code suggestion
+                    // Use this as the task description
+                    taskDescription = currentMessage.content;
+                    
+                    // Get the assistant's code as the proposed code
+                    const codeBlock = nextMessage.codeBlocks[nextMessage.codeBlocks.length - 1];
+                    proposedCode = codeBlock.content;
+                    language = codeBlock.language;
+                    
+                    // Check if the user message has code that might be original code
+                    if (currentMessage.codeBlocks && currentMessage.codeBlocks.length > 0) {
+                        originalCode = currentMessage.codeBlocks[0].content;
                     }
                     
-                    // Check for code in the message that might be original code
-                    if (message.codeBlocks && message.codeBlocks.length > 0) {
-                        const codeBlock = message.codeBlocks[0];
-                        originalCode = codeBlock.content;
-                        language = codeBlock.language;
-                    }
-                } 
-                // Check for proposed code in assistant messages
-                else if (message.role === 'assistant') {
-                    // Get the last code block from the assistant as the proposed code
-                    if (message.codeBlocks && message.codeBlocks.length > 0) {
+                    // Since we found a relevant pair, prioritize this over earlier ones
+                    // (This ensures we get the most recent query that led to code)
+                }
+            }
+            
+            // Fallback: if we didn't find a clear query-response pair, use the last user message
+            // before the most recent assistant message with code
+            if (!taskDescription) {
+                let lastAssistantWithCodeIndex = -1;
+                
+                // Find the last assistant message with code
+                for (let i = this.chatHistoryCache.length - 1; i >= 0; i--) {
+                    const message = this.chatHistoryCache[i];
+                    if (message.role === 'assistant' && 
+                        message.codeBlocks && 
+                        message.codeBlocks.length > 0) {
+                        lastAssistantWithCodeIndex = i;
+                        
+                        // Get the proposed code from this message
                         const codeBlock = message.codeBlocks[message.codeBlocks.length - 1];
                         proposedCode = codeBlock.content;
-                        
-                        // If we don't have a language yet, use this one
-                        if (!language) {
-                            language = codeBlock.language;
+                        language = codeBlock.language;
+                        break;
+                    }
+                }
+                
+                // Find the last user message before this assistant message
+                if (lastAssistantWithCodeIndex > 0) {
+                    for (let i = lastAssistantWithCodeIndex - 1; i >= 0; i--) {
+                        const message = this.chatHistoryCache[i];
+                        if (message.role === 'user') {
+                            // Filter out VS Code application output that might be mistaken for user queries
+                            const potentialTaskDescription = message.content;
+                            
+                            // Skip if it's likely application output (long stack traces, verbose logging, etc.)
+                            if (this.isLikelyApplicationOutput(potentialTaskDescription)) {
+                                Logger.debug('Skipping likely application output in task description', 'copilot-chat');
+                                continue;
+                            }
+                            
+                            taskDescription = potentialTaskDescription;
+                            
+                            // Check for original code
+                            if (message.codeBlocks && message.codeBlocks.length > 0) {
+                                originalCode = message.codeBlocks[0].content;
+                            }
+                            break;
                         }
                     }
                 }
             }
             
+            // Apply advanced parsing to extract more specific requirements from conversation
+            taskDescription = this.parseSpecificRequirements(taskDescription, this.chatHistoryCache);
+            
             // Only update if we have new information
             if (taskDescription || originalCode || proposedCode) {
-                this.lastExtractedContext = {
-                    taskDescription: taskDescription || this.lastExtractedContext.taskDescription,
+                // Create context update object
+                const contextUpdate = {
+                    taskDescription: taskDescription,
                     originalCode: originalCode || this.lastExtractedContext.originalCode,
                     proposedCode: proposedCode || this.lastExtractedContext.proposedCode,
                     language: language || this.lastExtractedContext.language,
+                    sourceType: 'chat', // Indicate this came from chat, not editor
                     timestamp: new Date().toISOString()
                 };
                 
-                Logger.info('Extracted context from Copilot Chat', 'copilot-chat');
-                Logger.debug(`Task: ${taskDescription.substring(0, 30)}... | Original: ${originalCode.length} chars | Proposed: ${proposedCode.length} chars`, 'copilot-chat');
+                // Update central context manager
+                contextManager.updateContext(contextUpdate);
+                
+                // Also keep local copy for backward compatibility
+                this.lastExtractedContext = contextManager.getContext();
+                
+                Logger.info('Extracted context from Copilot Chat and updated context manager', 'copilot-chat');
+                Logger.debug(`Task: ${taskDescription ? taskDescription.substring(0, 30) + '...' : 'none'} | Source: chat`, 'copilot-chat');
+                
+                // Show notification that we're using a chat query with view details option
+                vscode.window.showInformationMessage(
+                    'Using Copilot Chat query as task description',
+                    'View Details'
+                                ).then(selection => {
+                    if (selection === 'View Details') {
+                        this.showExtractedContext();
+                    }
+                });
                 
                 // Notify listeners
                 this.notifyContextChange();
@@ -441,7 +537,21 @@ class CopilotChatIntegration {
         this.extractContextFromChat(true);
         
         if (showNotification) {
-            vscode.window.showInformationMessage('Extracted context from Copilot Chat');
+            // Get the latest context from the context manager to ensure we have the most up-to-date information
+            const currentContext = contextManager.getContext();
+            const taskDescription = currentContext.taskDescription || 'No task description found';
+            
+            vscode.window.showInformationMessage(
+                'Extracted context from Copilot Chat', 
+                'View Details',
+                'Edit Task'
+            ).then(selection => {
+                if (selection === 'View Details') {
+                    this.showExtractedContext();
+                } else if (selection === 'Edit Task') {
+                    this.promptForTaskEdit(taskDescription);
+                }
+            });
         }
     }
     
@@ -450,15 +560,32 @@ class CopilotChatIntegration {
      */
     showExtractedContext() {
         try {
-            const context = this.lastExtractedContext;
+            // Get the latest context from the central context manager
+            const context = contextManager.getContext();
             
             if (!context || !context.taskDescription) {
-                vscode.window.showInformationMessage('No context has been extracted from Copilot Chat yet');
+                vscode.window.showInformationMessage('No context has been extracted yet');
                 return;
             }
             
-            // Create a JSON representation
-            const content = JSON.stringify(context, null, 2);
+            // Create a summary of the context for display
+            const summary = {
+                taskDescription: context.taskDescription,
+                language: context.language,
+                sourceType: context.sourceType,
+                timestamp: context.timestamp,
+                metadata: context.metadata || {},
+                // Include snippet previews instead of full code to avoid overwhelming the display
+                originalCodePreview: context.originalCode ? 
+                    `${context.originalCode.substring(0, 100)}${context.originalCode.length > 100 ? '...' : ''}` : 
+                    'None',
+                proposedCodePreview: context.proposedCode ? 
+                    `${context.proposedCode.substring(0, 100)}${context.proposedCode.length > 100 ? '...' : ''}` : 
+                    'None'
+            };
+            
+            // Create a nicely formatted JSON representation
+            const content = JSON.stringify(summary, null, 2);
             
             // Create a new untitled document
             vscode.workspace.openTextDocument({ 
@@ -471,6 +598,34 @@ class CopilotChatIntegration {
             Logger.error(`Error showing extracted context: ${error.message}`, 'copilot-chat');
             vscode.window.showErrorMessage('Error showing extracted context');
         }
+    }
+    
+    /**
+     * Prompt the user to edit the task description
+     * @param {string} currentDescription The current task description
+     */
+    promptForTaskEdit(currentDescription) {
+        vscode.window.showInputBox({
+            prompt: 'Edit the task description',
+            value: currentDescription,
+            placeHolder: 'Enter task description',
+            validateInput: text => {
+                return text.length > 0 ? null : 'Task description cannot be empty';
+            }
+        }).then(newDescription => {
+            if (newDescription && newDescription !== currentDescription) {
+                // Update the context with the user-edited task description
+                // Use forceUpdate to override any existing task description, including from chat
+                contextManager.updateContext({
+                    taskDescription: newDescription,
+                    sourceType: 'manual', // Indicate manual edit by user
+                    forceUpdate: true // Force override regardless of source priority
+                });
+                
+                Logger.info('Task description manually updated by user', 'copilot-chat');
+                vscode.window.showInformationMessage('Task description updated successfully');
+            }
+        });
     }
     
     /**
@@ -487,9 +642,13 @@ class CopilotChatIntegration {
      * Notify all listeners of a context change
      */
     notifyContextChange() {
+        // Get the latest context from the context manager
+        const currentContext = contextManager.getContext();
+        
+        // Notify all registered callbacks with the current context
         for (const callback of this.chatChangeCallbacks) {
             try {
-                callback(this.lastExtractedContext);
+                callback(currentContext);
             } catch (error) {
                 Logger.error(`Error in chat context change callback: ${error.message}`, 'copilot-chat');
             }
@@ -498,10 +657,200 @@ class CopilotChatIntegration {
     
     /**
      * Get the last extracted context
-     * @returns {Object} The last extracted context
+     * @returns {Object} The latest context from the context manager
      */
     getExtractedContext() {
-        return this.lastExtractedContext;
+        return contextManager.getContext();
+    }
+    
+    /**
+     * Check if a string is likely to be application output rather than a user query
+     * @param {string} text The text to check
+     * @returns {boolean} Whether the text is likely application output
+     */
+    isLikelyApplicationOutput(text) {
+        if (!text) return false;
+        
+        // Define patterns that suggest application output
+        const applicationOutputPatterns = [
+            // Stack traces
+            /at\s+[\w.]+\s+\(.*:\d+:\d+\)/i,
+            // Log lines with timestamps
+            /^\[\d{2}:\d{2}:\d{2}\]/,
+            // Error messages with file paths
+            /Error: .* in .*\.(?:js|ts|py|java|cs)/i,
+            // Long console output with many special characters
+            /^.*?(?:\n.*?){10,}$/m && /[(){}\[\]<>|]/g.test(text) && text.length > 500,
+            // Terminal command output patterns
+            /^\$\s+.*\n(?:.*\n){3,}/m,
+            // Build output
+            /(?:Building|Compiling)\s+\d+\/\d+/i,
+            // Test output patterns
+            /(\d+)\s+(?:passing|failing|skipped)/i,
+            // VS Code specific messages
+            /Extension host|Window reload|Language server/i
+        ];
+        
+        // Check if any pattern matches
+        for (const pattern of applicationOutputPatterns) {
+            if (pattern.test(text)) {
+                return true;
+            }
+        }
+        
+        // Also check for excessively long text that doesn't look like a query
+        if (text.length > 1000 && text.split('\n').length > 15) {
+            // Long text with many lines - likely debug output
+            return true;
+        }
+        
+        // Check for common query indicators - if these are present, it's likely a user query
+        const queryIndicators = [
+            /(?:can|could) you/i,
+            /(?:please|how to|write|generate|create|implement|update|fix|help|code for)/i,
+            /(?:\?|function|class|method|component|module)/i
+        ];
+        
+        // If short text (likely a query) contains query indicators, ensure we don't filter it out
+        if (text.length < 500) {
+            for (const indicator of queryIndicators) {
+                if (indicator.test(text)) {
+                    return false; // This is likely a user query, not application output
+                }
+            }
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Parse conversations to extract specific requirements and instructions
+     * @param {string} basicTaskDescription The basic task description already extracted
+     * @param {Array} chatHistory The full chat history
+     * @returns {string} Enhanced task description with specific requirements
+     */
+    parseSpecificRequirements(basicTaskDescription, chatHistory) {
+        if (!basicTaskDescription || !chatHistory || chatHistory.length === 0) {
+            return basicTaskDescription;
+        }
+        
+        try {
+            // Start with the basic task description
+            let enhancedDescription = basicTaskDescription;
+            
+            // Instruction patterns (common ways users request things)
+            const instructionPatterns = [
+                /(?:can|could) you (?:please )?(create|implement|add|fix|update|modify|refactor|optimize|improve) ([^?\.]+)/i,
+                /(?:please |kindly )?(create|implement|add|fix|update|modify|refactor|optimize|improve) ([^?\.]+)/i,
+                /(?:I need|I want|I'd like|I would like)(?: you)? to (create|implement|add|fix|update|modify|refactor|optimize|improve) ([^?\.]+)/i,
+                /(?:Let's|We should|We need to) (create|implement|add|fix|update|modify|refactor|optimize|improve) ([^?\.]+)/i,
+                /(?:How (?:can|do) I|How would I) (create|implement|add|fix|update|modify|refactor|optimize|improve) ([^?\.]+)/i
+            ];
+            
+            // Requirement keywords (words that often indicate specific requirements)
+            const requirementKeywords = [
+                'must', 'should', 'needs to', 'has to', 'required', 'ensure', 'make sure',
+                'important', 'critical', 'essential', 'necessary'
+            ];
+            
+            // Collect all user messages
+            const userMessages = chatHistory
+                .filter(msg => msg.role === 'user')
+                .map(msg => msg.content);
+            
+            // Extract specific instructions matching known patterns
+            let extractedInstructions = [];
+            
+            for (const message of userMessages) {
+                // Check against instruction patterns
+                for (const pattern of instructionPatterns) {
+                    const match = message.match(pattern);
+                    if (match) {
+                        const verb = match[1]; // The action verb (create, implement, etc.)
+                        const what = match[2]; // What to do
+                        extractedInstructions.push(`${verb} ${what}`);
+                    }
+                }
+                
+                // Look for sentences containing requirement keywords
+                const sentences = message.split(/[.!?]+/).filter(s => s.trim().length > 0);
+                
+                for (const sentence of sentences) {
+                    for (const keyword of requirementKeywords) {
+                        if (sentence.toLowerCase().includes(keyword.toLowerCase())) {
+                            extractedInstructions.push(sentence.trim());
+                            break; // Only add the sentence once
+                        }
+                    }
+                }
+                
+                // Try to identify issues to be fixed
+                const issueMatches = message.match(/(?:bug|issue|problem|error|not working)(?:[:\-])? ([^.?!]+)/i);
+                if (issueMatches) {
+                    extractedInstructions.push(`Fix: ${issueMatches[1].trim()}`);
+                }
+            }
+            
+            // Build enhanced task description with clear sections
+            if (extractedInstructions.length > 0) {
+                // Start with original description
+                // Add specific requirements section if we found any
+                enhancedDescription += "\n\nSpecific Requirements:\n" + 
+                    extractedInstructions.map((instr, i) => `${i+1}. ${instr}`).join('\n');
+                
+                // Clean up any double spaces or excessive newlines
+                enhancedDescription = enhancedDescription
+                    .replace(/\n{3,}/g, '\n\n')
+                    .replace(/  +/g, ' ');
+            }
+            
+            return enhancedDescription;
+            
+        } catch (error) {
+            Logger.error(`Error parsing specific requirements: ${error.message}`, 'copilot-chat');
+            // Fall back to basic task description in case of error
+            return basicTaskDescription;
+        }
+    }
+    
+    /**
+     * Handle context changes from the central context manager
+     * @param {Object} updatedContext The updated context from context manager
+     */
+    handleContextChange(updatedContext) {
+        // Only process updates that didn't originate from this component
+        if (updatedContext.sourceType !== 'chat') {
+            Logger.debug(`Received context update from ${updatedContext.sourceType || 'unknown'} source`, 'copilot-chat');
+            
+            // Update our local copy of the context
+            this.lastExtractedContext = updatedContext;
+            
+            // We could use this context to enrich Copilot Chat interactions
+            // For example, we might use the task description to provide better context for Chat
+        }
+    }
+    
+    /**
+     * Clean up resources when extension is deactivated
+     */
+    dispose() {
+        // Unregister from context manager to prevent memory leaks
+        if (this.contextChangeUnsubscribe) {
+            this.contextChangeUnsubscribe();
+            this.contextChangeUnsubscribe = null;
+        }
+        
+        // Clear any pending timers
+        if (this.extractionDebounceTimer) {
+            clearTimeout(this.extractionDebounceTimer);
+            this.extractionDebounceTimer = null;
+        }
+        
+        // Clear caches to free memory
+        this.chatHistoryCache = [];
+        this.suggestionCache.clear();
+        
+        Logger.info('CopilotChatIntegration disposed', 'copilot-chat');
     }
 }
 

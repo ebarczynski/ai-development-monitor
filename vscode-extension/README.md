@@ -7,6 +7,7 @@ A VS Code extension that monitors GitHub Copilot suggestions, evaluates them for
 - Intercepts and evaluates GitHub Copilot suggestions
 - Integrates with GitHub Copilot Chat to capture conversations and extract relevant context
 - Implements intelligent duplicate detection to prevent excessive logging of suggestions
+- Provides context sharing between different components for better collaboration
 - Analyzes suggestions for potential hallucinations, inconsistencies, and recursive behaviors
 - Provides visual feedback on suggestion quality with risk scores
 - Allows you to accept or reject suggestions based on AI analysis

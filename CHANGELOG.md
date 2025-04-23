@@ -2,6 +2,16 @@
 
 All notable changes to the Python components of the AI Development Monitor will be documented in this file.
 
+## [0.4.2] - 2025-04-25
+
+### Added
+- Enhanced communication between backend components for better reliability
+- Improved error handling in MCP server connection management
+
+### Fixed
+- Resolved issues with TDD framework test execution
+- Fixed various minor bugs in the MCP server communication
+
 ## [0.4.0] - 2025-04-22
 
 ### Added

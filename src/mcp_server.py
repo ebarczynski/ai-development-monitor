@@ -214,9 +214,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 
 async def handle_suggestion(message: MCPMessage, websocket: WebSocket):
     """Handle a suggestion message"""
-    global agent
-    
-    # Extract suggestion data
+    global agent        # Extract suggestion data
     suggestion = message.content
     
     # Check if content is a dict or a Pydantic model
@@ -227,14 +225,23 @@ async def handle_suggestion(message: MCPMessage, websocket: WebSocket):
         )
         original_code = suggestion_dict.get("original_code", "")
         proposed_changes = suggestion_dict.get("proposed_changes", "")
-        task_description = suggestion_dict.get("task_description", "Implement functionality")
+        task_description = suggestion_dict.get("task_description", "")
         language = suggestion_dict.get("language", "python")
     else:
         # It's a dict
         original_code = suggestion.get("original_code", "")
         proposed_changes = suggestion.get("proposed_changes", "")
-        task_description = suggestion.get("task_description", "Implement functionality")
+        task_description = suggestion.get("task_description", "")
         language = suggestion.get("language", "python")
+        
+    # If task_description is empty, try to get it from context metadata
+    if not task_description and hasattr(message.context, "metadata") and message.context.metadata:
+        if isinstance(message.context.metadata, dict):
+            task_description = message.context.metadata.get("task_description", "")
+            
+    # Only use default if we still have no task description
+    if not task_description:
+        task_description = "Unknown task"
     
     # Check if TDD testing is requested in metadata
     run_tdd = True

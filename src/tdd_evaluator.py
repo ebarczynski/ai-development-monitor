@@ -6,6 +6,7 @@ This module helps evaluate TDD test results and integrate them into the suggesti
 import logging
 import re
 from typing import Dict, List, Tuple, Any
+from task_relevance import assess_task_relevance
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -101,20 +102,26 @@ def evaluate_tdd_results(tdd_tests: List[Dict[str, Any]], suggestion_code: str, 
         # Adjust score down for major issues
         issue_penalty = min(0.5, len(issues_detected) * 0.1)
         
-        # Final score calculation
-        tdd_score = max(0.1, base_score - issue_penalty)
+        # Determine relevance to task description
+        task_relevance = assess_task_relevance(tdd_tests, suggestion_code, task_description)
+        logger.debug(f"Task relevance score: {task_relevance:.2f}")
+        
+        # Final score is based on test results, adjusted for issues and task relevance
+        tdd_score = max(0.1, base_score - issue_penalty) * task_relevance
     
     # Generate additional recommendations
     if tdd_score < 0.4:
-        recommendations.append("Consider revising code based on test failures")
+        recommendations.append("Consider revising code based on test failures or low relevance to task")
     elif tdd_score > 0.7:
-        recommendations.append("Code performs well in tests")
+        recommendations.append("Code performs well in tests and aligns with task requirements")
     
     # Determine accept recommendation
     accept = tdd_score >= 0.6
     
+    # Add task relevance to the output
     return {
         "tdd_score": tdd_score,
+        "task_relevance": task_relevance if 'task_relevance' in locals() else 1.0,
         "issues_detected": issues_detected,
         "recommendations": recommendations,
         "accept": accept
