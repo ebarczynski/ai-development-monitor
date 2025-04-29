@@ -98,6 +98,15 @@ The system uses a multi-component architecture:
 5. **Web Interface** visualizes the communication with colorful logs and emoticons
 6. **TDD Framework** generates tests and manages test-driven development cycles
 
+### UML Diagrams
+
+The following UML diagrams provide a detailed view of the system architecture:
+
+- [Backend Components UML](./docs/diagrams/backend_components_uml.md) - Class diagram showing the backend components
+- [VS Code Extension Components UML](./docs/diagrams/vscode_extension_components_uml.md) - Class diagram showing the VS Code extension components
+- [Component Interaction UML](./docs/diagrams/component_interaction_uml.md) - Sequence diagram showing communication flow
+- [Package Dependency UML](./docs/diagrams/package_dependency_uml.md) - Diagram showing dependencies between modules
+
 ## MCP Protocol
 
 The Model Context Protocol (MCP) enables structured communication between AI systems:

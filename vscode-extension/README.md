@@ -15,6 +15,15 @@ A VS Code extension that monitors GitHub Copilot suggestions, evaluates them for
 - Supports Model Context Protocol (MCP) for structured AI-to-AI communication
 - Includes a comprehensive logging system for debugging
 
+## Architecture
+
+The extension is built with a modular component-based architecture. For detailed information, see the UML diagrams:
+
+- [VS Code Extension Components UML](../docs/diagrams/vscode_extension_components_uml.md) - Class diagram of extension components
+- [Component Interaction UML](../docs/diagrams/component_interaction_uml.md) - Sequence diagram showing interaction with other components
+- [Backend Components UML](../docs/diagrams/backend_components_uml.md) - Class diagram of backend components it communicates with
+- [Package Dependency UML](../docs/diagrams/package_dependency_uml.md) - Diagram showing dependencies between modules
+
 ## Requirements
 
 - Visual Studio Code v1.85.0 or higher
