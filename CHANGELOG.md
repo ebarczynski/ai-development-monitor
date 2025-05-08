@@ -2,7 +2,7 @@
 
 All notable changes to the Python components of the AI Development Monitor will be documented in this file.
 
-## [0.4.2] - 2025-04-25
+## [0.4.3] - 2025-04-25
 
 ### Added
 - Enhanced communication between backend components for better reliability

@@ -2,7 +2,7 @@
 
 All notable changes to the "AI Development Monitor" extension will be documented in this file.
 
-## [0.4.2] - 2025-04-25
+## [0.4.3] - 2025-04-25
 
 - Add missing `evaluateSuggestion` method to OptimizedMCPClient for proper suggestion evaluation
 - Fix message batching and connection quality testing in diagnostic tools
