@@ -121,15 +121,50 @@ class CopilotChatIntegration {
      * @param {vscode.Webview} webview The webview to track
      */
     trackChatWebview(webview) {
-        // Listen for messages from the webview
-        webview.onDidReceiveMessage(message => {
-            if (this.isCopilotChatMessage(message)) {
-                this.processChatMessage(message);
+        try {
+            this.logWebviewCommunication('initialization', 'attempt', 'Setting up tracking for potential Copilot Chat webview');
+            
+            // Create a message listener with improved error handling
+            const messageListener = webview.onDidReceiveMessage(message => {
+                try {
+                    this.logWebviewCommunication('message-received', 'success', message);
+                    
+                    if (this.isCopilotChatMessage(message)) {
+                        this.processChatMessage(message);
+                    } else {
+                        this.logWebviewCommunication('message-processing', 'skipped', 'Non-Copilot message ignored');
+                    }
+                } catch (error) {
+                    this.logWebviewCommunication('message-processing', 'failed', message, error);
+                }
+            });
+            
+            // Store the listener so we can dispose it later
+            if (!this.webviewListeners) {
+                this.webviewListeners = [];
             }
-        });
-        
-        // Inject custom script to capture chat content
-        this.injectChatCaptureScript(webview);
+            this.webviewListeners.push(messageListener);
+            
+            // Set up state checking to verify the connection is still alive
+            this.webviewConnectionTimeout = setTimeout(() => {
+                this.checkWebviewConnection(webview);
+            }, 5000);
+            
+            // Inject custom script to capture chat content
+            this.injectChatCaptureScript(webview);
+            
+            // Send a ping to test the connection
+            try {
+                webview.postMessage({ type: 'ai-dev-monitor-ping' });
+                this.logWebviewCommunication('ping', 'attempt', 'Sent ping to test connection');
+            } catch (error) {
+                this.logWebviewCommunication('ping', 'failed', null, error);
+            }
+            
+            this.logWebviewCommunication('initialization', 'success', 'Webview tracking set up successfully');
+        } catch (error) {
+            this.logWebviewCommunication('initialization', 'failed', null, error);
+        }
     }
     
     /**
@@ -138,52 +173,119 @@ class CopilotChatIntegration {
      */
     injectChatCaptureScript(webview) {
         try {
-            // We can't directly modify the webview content, but we can try 
-            // posting a message to it that our extension can intercept
+            Logger.info('Setting up communication with Copilot Chat webview', 'copilot-chat');
+            
+            // Set up proper message handling for the webview
+            webview.onDidReceiveMessage(message => {
+                Logger.debug(`Received message from Copilot Chat webview: ${JSON.stringify(message)}`, 'copilot-chat');
+                this.processChatMessage(message);
+            });
+            
+            // Create a proper extension-to-webview communication channel
+            // This uses VS Code's supported mechanism for webview communication
+            const extensionId = 'local-publisher.ai-development-monitor';
+            
+            // Create the content to inject - using VS Code's supported postMessage mechanism
             const script = `
-                const observer = new MutationObserver(mutations => {
-                    // Look for chat content changes
-                    const chatContent = document.querySelector('.chat-content') || 
-                                       document.querySelector('.copilot-chat-history');
+                // Only execute in GitHub Copilot Chat webview
+                if (document.querySelector('.chat-content') || 
+                    document.querySelector('.copilot-chat-history')) {
                     
-                    if (chatContent) {
-                        const chatMessages = Array.from(chatContent.querySelectorAll('.message, .chat-entry'));
-                        const extractedChat = chatMessages.map(msg => {
-                            const role = msg.classList.contains('user') ? 'user' : 'assistant';
-                            const content = msg.querySelector('.message-content, .text-content')?.textContent || '';
-                            const codeBlocks = Array.from(msg.querySelectorAll('pre code')).map(code => {
-                                return {
-                                    language: code.className.replace('language-', ''),
-                                    content: code.textContent
-                                };
+                    console.log('[AI Dev Monitor] Chat capture script initialized');
+                    
+                    // Create a utility function to safely extract chat content
+                    function extractChatContent() {
+                        try {
+                            const chatContent = document.querySelector('.chat-content') || 
+                                              document.querySelector('.copilot-chat-history');
+                            
+                            if (!chatContent) return null;
+                            
+                            const chatMessages = Array.from(
+                                chatContent.querySelectorAll('.message, .chat-entry')
+                            );
+                            
+                            const extractedChat = chatMessages.map(msg => {
+                                const role = msg.classList.contains('user') ? 'user' : 'assistant';
+                                const content = msg.querySelector('.message-content, .text-content')?.textContent || '';
+                                const codeBlocks = Array.from(msg.querySelectorAll('pre code')).map(code => {
+                                    return {
+                                        language: code.className.replace('language-', ''),
+                                        content: code.textContent
+                                    };
+                                });
+                                
+                                return { role, content, codeBlocks };
                             });
                             
-                            return { role, content, codeBlocks };
-                        });
-                        
-                        // Post message to extension
-                        window.postMessage({ 
-                            type: 'ai-dev-monitor-chat-extract',
-                            chatHistory: extractedChat
-                        });
+                            return extractedChat;
+                        } catch (error) {
+                            console.error('[AI Dev Monitor] Error extracting chat content:', error);
+                            return null;
+                        }
                     }
-                });
-                
-                // Start observing chat changes
-                observer.observe(document.body, { 
-                    childList: true, 
-                    subtree: true,
-                    characterData: true 
-                });
-                
-                // Initial extraction
-                setTimeout(() => {
-                    const event = new Event('chatExtractReady');
-                    document.dispatchEvent(event);
-                }, 1000);
+                    
+                    // Set up the observer using a more robust approach
+                    const observer = new MutationObserver((mutations) => {
+                        // Extract content only when we observe actual changes
+                        const extractedChat = extractChatContent();
+                        if (extractedChat && extractedChat.length > 0) {
+                            // Use the VS Code webview API's postMessage
+                            // This is the officially supported way to communicate from webview to extension
+                            const vscode = acquireVsCodeApi();
+                            vscode.postMessage({
+                                type: 'ai-dev-monitor-chat-extract',
+                                chatHistory: extractedChat,
+                                timestamp: new Date().toISOString()
+                            });
+                        }
+                    });
+                    
+                    // Configure a more efficient observer
+                    observer.observe(document.body, {
+                        childList: true,
+                        subtree: true,
+                        characterData: false // Reduce overhead by not observing text changes
+                    });
+                    
+                    // Do an initial extraction
+                    setTimeout(() => {
+                        const extractedChat = extractChatContent();
+                        if (extractedChat && extractedChat.length > 0) {
+                            try {
+                                const vscode = acquireVsCodeApi();
+                                vscode.postMessage({
+                                    type: 'ai-dev-monitor-chat-extract',
+                                    chatHistory: extractedChat,
+                                    timestamp: new Date().toISOString()
+                                });
+                                console.log('[AI Dev Monitor] Initial chat content extracted');
+                            } catch (error) {
+                                console.error('[AI Dev Monitor] Error sending initial extraction:', error);
+                            }
+                        }
+                    }, 1500); // Give a bit more time for the chat to initialize
+                    
+                    // Add error handling
+                    window.addEventListener('error', (event) => {
+                        console.error('[AI Dev Monitor] Error in chat capture script:', event.error);
+                    });
+                }
             `;
             
-            webview.html = webview.html?.replace('</body>', `<script>${script}</script></body>`) || '';
+            // Only attempt to modify the HTML if we have access to it
+            if (webview.html) {
+                // Try to inject our script safely
+                if (webview.html.includes('</body>')) {
+                    webview.html = webview.html.replace('</body>', `<script>${script}</script></body>`);
+                    Logger.info('Successfully injected chat capture script', 'copilot-chat');
+                } else {
+                    Logger.warn('Could not find </body> tag to inject script', 'copilot-chat');
+                }
+            } else {
+                Logger.warn('No access to webview HTML content', 'copilot-chat');
+                // Consider using a message-based approach to request content instead
+            }
             
         } catch (error) {
             Logger.error(`Error injecting chat capture script: ${error.message}`, 'copilot-chat');
@@ -208,17 +310,60 @@ class CopilotChatIntegration {
      */
     processChatMessage(message) {
         try {
+            // Add basic message validation
+            if (!message) {
+                Logger.warn('Received empty message from Copilot Chat', 'copilot-chat');
+                return;
+            }
+            
+            // Handle ping responses to verify connection is alive
+            if (message.type === 'ai-dev-monitor-pong') {
+                this.webviewConnectionAlive = true;
+                Logger.debug('Received pong from Copilot Chat webview', 'copilot-chat');
+                return;
+            }
+            
             // Check if this is our custom extraction message
             if (message.type === 'ai-dev-monitor-chat-extract') {
-                this.chatHistoryCache = message.chatHistory || [];
-                Logger.debug(`Captured ${this.chatHistoryCache.length} chat messages`, 'copilot-chat');
-                this.extractContextFromChat();
+                // Validate the chat history structure
+                if (!message.chatHistory || !Array.isArray(message.chatHistory)) {
+                    Logger.warn('Received malformed chat history', 'copilot-chat');
+                    return;
+                }
+                
+                // Log receipt of chat history with timestamp
+                Logger.info(`Captured ${message.chatHistory.length} chat messages at ${message.timestamp || 'unknown time'}`, 'copilot-chat');
+                
+                // Filter out empty messages and ensure required properties
+                const validMessages = message.chatHistory.filter(msg => 
+                    msg && msg.role && (msg.content || (msg.codeBlocks && msg.codeBlocks.length))
+                );
+                
+                if (validMessages.length !== message.chatHistory.length) {
+                    Logger.debug(`Filtered out ${message.chatHistory.length - validMessages.length} invalid messages`, 'copilot-chat');
+                }
+                
+                this.chatHistoryCache = validMessages;
+                
+                // Only extract if we actually have valid messages
+                if (this.chatHistoryCache.length > 0) {
+                    this.extractContextFromChat();
+                }
+                
                 return;
             }
             
             // Handle regular Copilot Chat messages
             if (message.command === 'chatResponse' || message.kind === 'chat') {
                 const content = message.text || message.content || '';
+                
+                if (!content) {
+                    Logger.debug('Received empty chat content, ignoring', 'copilot-chat');
+                    return;
+                }
+                
+                // Log receipt of chat message
+                Logger.debug(`Received chat message: ${content.substring(0, 50)}...`, 'copilot-chat');
                 
                 // Check if we've recently processed this exact message
                 const messageHash = this.hashMessage(content);
@@ -831,26 +976,166 @@ class CopilotChatIntegration {
     }
     
     /**
+     * Check if the webview connection is still alive
+     * @param {vscode.Webview} webview The webview to check
+     */
+    checkWebviewConnection(webview) {
+        try {
+            // Clear existing timeout
+            if (this.webviewConnectionTimeout) {
+                clearTimeout(this.webviewConnectionTimeout);
+                this.webviewConnectionTimeout = null;
+            }
+            
+            // Try to ping the webview
+            try {
+                const pingData = { 
+                    type: 'ai-dev-monitor-ping', 
+                    timestamp: new Date().toISOString() 
+                };
+                
+                webview.postMessage(pingData);
+                this.logWebviewCommunication('connection-check', 'attempt', pingData);
+                
+                // Set up the next check
+                this.webviewConnectionTimeout = setTimeout(() => {
+                    this.checkWebviewConnection(webview);
+                }, 30000); // Check every 30 seconds
+            } catch (error) {
+                this.logWebviewCommunication('connection-check', 'failed', 'Webview connection appears to be broken', error);
+                // The webview might have been disposed, so we'll stop checking
+                this.webviewConnectionAlive = false;
+            }
+        } catch (error) {
+            this.logWebviewCommunication('connection-check-setup', 'failed', null, error);
+        }
+    }
+    
+    /**
+     * Log webview communication events with consistent formatting
+     * @param {string} action The communication action being performed
+     * @param {string} status The status of the action (success, failure, attempt)
+     * @param {any} data Optional data related to the communication
+     * @param {Error} error Optional error object if the action failed
+     */
+    logWebviewCommunication(action, status, data = null, error = null) {
+        const timestamp = new Date().toISOString();
+        
+        // Base message includes the action and status
+        let message = `WebView ${action} - ${status}`;
+        
+        // Add optional data summary if provided
+        if (data) {
+            let dataSummary = '';
+            if (typeof data === 'string') {
+                dataSummary = data.length > 50 ? `${data.substring(0, 50)}...` : data;
+            } else if (typeof data === 'object') {
+                try {
+                    const jsonStr = JSON.stringify(data);
+                    dataSummary = jsonStr.length > 50 ? `${jsonStr.substring(0, 50)}...` : jsonStr;
+                } catch (jsonError) {
+                    dataSummary = `[Object of type ${data.constructor.name}]`;
+                }
+            } else {
+                dataSummary = String(data);
+            }
+            message += ` - ${dataSummary}`;
+        }
+        
+        // Add error details if provided
+        if (error) {
+            message += ` - Error: ${error.message}`;
+            
+            // Log at error or warning level based on status
+            if (status === 'failed') {
+                Logger.error(message, 'copilot-chat-webview');
+                // Log stack trace at debug level
+                Logger.debug(`Stack trace: ${error.stack}`, 'copilot-chat-webview');
+            } else {
+                Logger.warn(message, 'copilot-chat-webview');
+            }
+        } else {
+            // No error, use appropriate log level based on status
+            if (status === 'success') {
+                Logger.info(message, 'copilot-chat-webview');
+            } else if (status === 'attempt') {
+                Logger.debug(message, 'copilot-chat-webview');
+            } else {
+                Logger.warn(message, 'copilot-chat-webview');
+            }
+        }
+        
+        // Also add to diagnostic information for later troubleshooting
+        if (!this.webviewCommunicationLog) {
+            this.webviewCommunicationLog = [];
+        }
+        
+        // Keep a limited history of communication logs
+        this.webviewCommunicationLog.push({
+            timestamp,
+            action,
+            status,
+            data: data ? (typeof data === 'string' ? data : JSON.stringify(data)) : null,
+            error: error ? error.message : null
+        });
+        
+        // Trim log if it gets too large
+        if (this.webviewCommunicationLog.length > 100) {
+            this.webviewCommunicationLog.shift();
+        }
+    }
+    
+    /**
      * Clean up resources when extension is deactivated
      */
     dispose() {
+        Logger.info('Disposing CopilotChatIntegration resources', 'copilot-chat');
+        
         // Unregister from context manager to prevent memory leaks
         if (this.contextChangeUnsubscribe) {
             this.contextChangeUnsubscribe();
             this.contextChangeUnsubscribe = null;
+            Logger.debug('Unregistered from context manager', 'copilot-chat');
         }
         
-        // Clear any pending timers
+        // Clean up all webview-related listeners
+        if (this.webviewListeners && this.webviewListeners.length > 0) {
+            Logger.debug(`Disposing ${this.webviewListeners.length} webview listeners`, 'copilot-chat');
+            this.webviewListeners.forEach(listener => {
+                try {
+                    listener.dispose();
+                } catch (error) {
+                    Logger.warn(`Error disposing webview listener: ${error.message}`, 'copilot-chat');
+                }
+            });
+            this.webviewListeners = [];
+        }
+        
+        // Clear webview connection timeout
+        if (this.webviewConnectionTimeout) {
+            clearTimeout(this.webviewConnectionTimeout);
+            this.webviewConnectionTimeout = null;
+            Logger.debug('Cleared webview connection timeout', 'copilot-chat');
+        }
+        
+        // Clear extraction debounce timer
         if (this.extractionDebounceTimer) {
             clearTimeout(this.extractionDebounceTimer);
             this.extractionDebounceTimer = null;
+            Logger.debug('Cleared extraction debounce timer', 'copilot-chat');
         }
         
-        // Clear caches to free memory
-        this.chatHistoryCache = [];
-        this.suggestionCache.clear();
+        // Clear message caches to free memory
+        const chatHistorySize = this.chatHistoryCache ? this.chatHistoryCache.length : 0;
+        const suggestionCacheSize = this.suggestionCache ? this.suggestionCache.size : 0;
         
-        Logger.info('CopilotChatIntegration disposed', 'copilot-chat');
+        this.chatHistoryCache = [];
+        if (this.suggestionCache) {
+            this.suggestionCache.clear();
+        }
+        
+        Logger.info(`Cleared chat history (${chatHistorySize} items) and suggestion cache (${suggestionCacheSize} items)`, 'copilot-chat');
+        Logger.info('CopilotChatIntegration resources successfully disposed', 'copilot-chat');
     }
 }
 

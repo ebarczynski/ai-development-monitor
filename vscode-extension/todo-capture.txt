@@ -1,0 +1,60 @@
+# ToDo: Fix GitHub Copilot Chat Integration
+
+## 1. Improve WebView Capturing Mechanism
+- [ ] Replace DOM manipulation approach with the VS Code WebView API
+- [ ] Implement messaging protocol compatible with VS Code's security model
+- [ ] Add robust error handling for webview communication
+- [ ] Add detailed logging for webview communication attempts
+
+## 2. Fix Message Event Handling
+- [ ] Create a unified message handler that works with all Copilot Chat message formats
+- [ ] Implement separate processors for different message types (user queries, AI responses, code blocks)
+- [ ] Add message validation to prevent processing of malformed messages
+- [ ] Implement robust message sequencing to properly pair queries with responses
+
+## 3. Enhance Context Extraction Logic
+- [ ] Refactor extractContextFromChat() to be more resilient to different chat patterns
+- [ ] Improve code block extraction with better regex patterns
+- [ ] Add language detection for extracted code blocks
+- [ ] Create a more robust algorithm for pairing user queries with AI responses containing code
+
+## 4. Add Comprehensive Debugging Support
+- [ ] Add detailed logging points throughout the chat capture process
+- [ ] Create a diagnostic mode that shows exactly what's being captured
+- [ ] Add a command to manually trigger chat capture with verbose output
+- [ ] Create a dedicated diagnostics panel for chat integration issues
+
+## 5. Fix Context Manager Integration
+- [ ] Ensure consistent context update patterns across all components
+- [ ] Verify bidirectional communication between chat integration and context manager
+- [ ] Add validation for context updates
+- [ ] Implement better source tracking for context data
+
+## 6. Implement Direct Copilot API Integration (if available)
+- [ ] Research if GitHub Copilot exposes any official APIs for chat integration
+- [ ] Implement direct integration with Copilot's extension API if available
+- [ ] Add fallback mechanisms if direct API access isn't available
+
+## 7. Add User Feedback Mechanisms
+- [ ] Add status indicators showing when chat content is successfully captured
+- [ ] Create notification system for chat capture events
+- [ ] Add manual correction capabilities for misinterpreted content
+- [ ] Implement confidence scoring for extracted context
+
+## 8. Add Reliability Improvements
+- [ ] Implement retry mechanisms for failed extractions
+- [ ] Add session persistence for chat history
+- [ ] Create background polling as an alternative to event-based capturing
+- [ ] Implement heartbeat checks to detect if chat integration is working
+
+## 9. Ensure Clean Extension Lifecycle
+- [ ] Fix resource cleanup in dispose() method
+- [ ] Ensure all event listeners are properly removed
+- [ ] Verify that timers are cleared on deactivation
+- [ ] Add graceful error handling for lifecycle events
+
+## 10. Testing Strategy
+- [ ] Create test scenarios for different chat interaction patterns
+- [ ] Develop mocks for Copilot Chat interface
+- [ ] Implement automated tests for chat extraction logic
+- [ ] Add manual test procedure documentation
