@@ -40,6 +40,11 @@ def set_agent(agent_instance):
     agent = agent_instance
     logger.info("Agent instance set in TDD helpers")
 
+import asyncio
+
+# Global lock for serializing LLM requests
+llm_request_lock = asyncio.Lock()
+
 async def handle_tdd_request(message, websocket: WebSocket):
     """Handle a TDD test generation request"""
     global agent
@@ -100,43 +105,56 @@ async def handle_tdd_request(message, websocket: WebSocket):
     # Further enhance with adaptive test generation strategies
     prompt = enhance_test_prompt_with_adaptive_strategy(prompt, code, language, task_description, iteration, max_iterations)
     
-    # Generate tests using LLM
+    # Generate tests using LLM with extended timeout and clear error reporting
     generated_tests = ""
     try:
-        # Use the agent to generate tests
-        if agent and hasattr(agent, 'llm_client') and agent.llm_client:
-            # Generate tests
-            logger.info(f"Generating tests for iteration {iteration}/{max_iterations} using agent")
-            response = await agent.llm_client.generate_async(prompt)
-            generated_tests = response
-            
-            # Basic cleanup and validation
-            generated_tests = cleanup_generated_tests(generated_tests, language)
+        if agent and hasattr(agent, 'send_prompt_to_llm'):
+            logger.info(f"Generating tests for iteration {iteration}/{max_iterations} using agent.send_prompt_to_llm (serialized)")
+            import asyncio
+            loop = asyncio.get_event_loop()
+            async with llm_request_lock:
+                llm_response = await loop.run_in_executor(None, agent.send_prompt_to_llm, prompt)
+            if llm_response.get("success") and llm_response.get("response"):
+                generated_tests = cleanup_generated_tests(llm_response["response"], language)
+            else:
+                logger.error(f"LLM test generation failed: {llm_response.get('error', 'Unknown error')}")
+                generated_tests = ""
+                error_message = f"LLM model error: {llm_response.get('error', 'No response from LLM')}"
         else:
-            logger.warning("Agent not available, using fallback tests")
-            generated_tests = generate_fallback_tests(code, language, iteration, task_description)
+            logger.error("Agent or send_prompt_to_llm not available. Cannot generate tests.")
+            generated_tests = ""
+            error_message = "LLM backend is not available. Please check your Olama/LLM connection."
     except Exception as e:
-        logger.error(f"Error generating tests: {e}")
-        generated_tests = generate_fallback_tests(code, language, iteration, task_description)
+        logger.error(f"Unexpected error in test generation: {e}")
+        generated_tests = ""
+        error_message = f"Unexpected error: {e}"
     
     # Prepare response
+    response_content = {
+        "test_code": generated_tests,
+        "language": language,
+        "iteration": iteration,
+        "task_description": task_description,
+        "max_iterations": max_iterations
+    }
+    if not generated_tests:
+        response_content["error"] = error_message if 'error_message' in locals() else "Unknown error: No tests generated."
+
     response = {
         "message_type": "tdd_tests",
         "context": message.context.model_dump() if hasattr(message.context, "model_dump") else message.context.dict(),
-        "content": {
-            "test_code": generated_tests,
-            "language": language,
-            "iteration": iteration,
-            "task_description": task_description,
-            "max_iterations": max_iterations
-        }
+        "content": response_content
     }
-    
+
     # Log outgoing TDD tests
     add_to_logs("outgoing", "tdd_tests", response["content"])
-    
-    # Send response
-    await websocket.send_text(json.dumps(response))
+
+    # Send response with error handling for closed WebSocket
+    import logging
+    try:
+        await websocket.send_text(json.dumps(response))
+    except Exception as e:
+        logging.error(f"Failed to send TDD response on WebSocket: {e}")
 
 def create_tdd_test_prompt(code, language, iteration, test_purpose, task_description="", original_code="", max_iterations=DEFAULT_MAX_ITERATIONS):
     """Create a prompt for generating TDD tests based on iteration number and task description"""
@@ -257,57 +275,9 @@ def cleanup_generated_tests(test_code, language):
         elif "pytest" in test_code and "pytest" not in test_code:
             test_code = "import pytest\n\n" + test_code
     
+
     return test_code.strip()
 
-def generate_fallback_tests(code, language, iteration, task_description=""):
-    """Generate fallback tests if LLM generation fails"""
-    if language.lower() == "python":
-        # Include task description in the comment if available
-        task_comment = f" for {task_description}" if task_description else ""
-        
-        return f"""
-# Fallback tests for iteration {iteration}{task_comment}
-import pytest
 
-def test_code_functionality():
-    # Basic test to verify the code runs
-    # Modify this test according to the actual functionality
-    
-    # This is a generic test scaffold - ideally these tests would be
-    # generated specifically for the task: "{task_description}"
-    
-    # Some basic assertions that should be adapted for the specific code:
-    assert True  # Replace with actual test for the function
-    
-    # Examples of common test patterns (modify for your specific code):
-    # 1. Check function exists (if applicable)
-    # 2. Test basic functionality with simple inputs
-    # 3. Test edge cases
-    # 4. Test error handling
-"""
-    else:
-        # JavaScript fallback
-        task_comment = f" for {task_description}" if task_description else ""
-        return f"""
-// Fallback tests for iteration {iteration}{task_comment}
-const assert = require('assert');
-
-describe('Code Functionality', () => {{
-  // Basic test to verify the code runs
-  // Modify this test according to the actual functionality
-  
-  // This is a generic test scaffold - ideally these tests would be
-  // generated specifically for the task: "{task_description}"
-  
-  it('should execute without errors', () => {{
-    // Replace with actual test for your specific code
-    assert.equal(true, true);
-  }});
-  
-  // Examples of common test patterns (modify for your specific code):
-  // 1. Check function exists (if applicable)
-  // 2. Test basic functionality with simple inputs 
-  // 3. Test edge cases
-  // 4. Test error handling
-}});
-"""
+# The following function stub and code were left over from a previous implementation and are now removed.
+# All test generation must now come from the LLM backend. If LLM fails, an error is returned and logged.

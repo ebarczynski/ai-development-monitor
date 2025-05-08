@@ -21,7 +21,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.monitor_agent import DevelopmentMonitorAgent
 from src.web_interface import add_to_logs, get_html_interface
-from src.tdd_helpers import handle_tdd_request, create_tdd_test_prompt, cleanup_generated_tests, generate_fallback_tests, set_agent
+from src.tdd_helpers import handle_tdd_request, create_tdd_test_prompt, cleanup_generated_tests, set_agent
 from src.tdd_evaluator import evaluate_tdd_results, combine_evaluation_results
 
 # Configure logging
@@ -39,6 +39,10 @@ except ImportError:
     agent = None
 
 # FastAPI app
+
+import time
+from collections import deque, defaultdict
+
 app = FastAPI(title="AI Development Monitor MCP Server")
 
 # Add CORS middleware
@@ -51,7 +55,12 @@ app.add_middleware(
 )
 
 # WebSocket connections
+
+# Track active connections and per-client request queues
 active_connections: Dict[str, WebSocket] = {}
+client_request_queues = defaultdict(deque)  # client_id -> deque of (timestamp, data)
+client_processing_flags = defaultdict(lambda: False)  # client_id -> bool
+client_last_backoff = defaultdict(lambda: 1.0)  # client_id -> last backoff in seconds
 
 # MCP Message Models
 class MCPContext(BaseModel):
@@ -139,78 +148,97 @@ async def connect_llm():
     
     return {"success": True}
 
+
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
-    """WebSocket endpoint for MCP communication"""
-    global agent, active_connections
-    
+    """WebSocket endpoint for MCP communication with queuing and granular logging"""
+    global agent, active_connections, client_request_queues, client_processing_flags, client_last_backoff
+
     await websocket.accept()
     active_connections[client_id] = websocket
-    logger.info(f"WebSocket connection established with client: {client_id}")
-    
+    logger.info(f"[CONNECT] WebSocket connection established with client: {client_id} at {time.strftime('%Y-%m-%d %H:%M:%S')} | Active connections: {len(active_connections)}")
+
     # Initialize agent if not already done
     if agent is None:
         agent = DevelopmentMonitorAgent('config.json')
-        
-        # Connect to LLM
         if not agent.connect_llm():
             error_msg = {"error": "Failed to connect to LLM", "message_type": "error"}
-            # Log outgoing error message
             add_to_logs("outgoing", "error", error_msg)
             await websocket.send_text(json.dumps(error_msg))
             await websocket.close()
+            logger.info(f"[DISCONNECT] Client {client_id} closed due to LLM connection failure at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            if client_id in active_connections:
+                del active_connections[client_id]
             return
-    
+
     try:
-        # Handle messages
         while True:
-            # Receive message
             data = await websocket.receive_text()
-            logger.info(f"Received message from client {client_id}")
-            
-            try:
-                # Parse message
-                message_data = json.loads(data)
-                message = MCPMessage(**message_data)
-                
-                # Log incoming message
-                add_to_logs("incoming", message.message_type, message_data)
-                
-                # Process message based on type
-                if message.message_type == "suggestion":
-                    await handle_suggestion(message, websocket)
-                elif message.message_type == "continue":
-                    await handle_continue(message, websocket)
-                elif message.message_type == "tdd_request":
-                    await handle_tdd_request(message, websocket)
-                else:
-                    error_msg = {
-                        "error": f"Unsupported message type: {message.message_type}",
-                        "message_type": "error",
-                        "context": message.context.model_dump() if hasattr(message.context, "model_dump") else message.context.dict()
-                    }
-                    # Log outgoing error message
-                    add_to_logs("outgoing", "error", error_msg)
-                    await websocket.send_text(json.dumps(error_msg))
-            
-            except json.JSONDecodeError:
-                error_msg = {"error": "Invalid JSON message", "message_type": "error"}
-                # Log outgoing error message
-                add_to_logs("outgoing", "error", error_msg)
-                await websocket.send_text(json.dumps(error_msg))
-            
-            except Exception as e:
-                logger.error(f"Error processing message: {e}")
-                error_msg = {"error": f"Error processing message: {str(e)}", "message_type": "error"}
-                # Log outgoing error message
-                add_to_logs("outgoing", "error", error_msg)
-                await websocket.send_text(json.dumps(error_msg))
-    
+            logger.info(f"[RECEIVE] Message from client {client_id} at {time.strftime('%Y-%m-%d %H:%M:%S')} | Queue length: {len(client_request_queues[client_id])}")
+            # Enqueue the request
+            client_request_queues[client_id].append((time.time(), data))
+            # Start processing if not already
+            if not client_processing_flags[client_id]:
+                asyncio.create_task(process_client_queue(client_id))
     except WebSocketDisconnect:
-        # Remove connection when client disconnects
         if client_id in active_connections:
             del active_connections[client_id]
-        logger.info(f"WebSocket connection closed with client: {client_id}")
+        logger.info(f"[DISCONNECT] WebSocket connection closed with client: {client_id} at {time.strftime('%Y-%m-%d %H:%M:%S')} | Active connections: {len(active_connections)}")
+    except Exception as e:
+        logger.error(f"[ERROR] Exception in websocket_endpoint for client {client_id}: {e}")
+        if client_id in active_connections:
+            del active_connections[client_id]
+        logger.info(f"[DISCONNECT] WebSocket connection forcibly closed for client: {client_id} at {time.strftime('%Y-%m-%d %H:%M:%S')} | Active connections: {len(active_connections)}")
+
+
+# Exponential backoff parameters
+MIN_BACKOFF = 1.0  # seconds
+MAX_BACKOFF = 30.0  # seconds
+BACKOFF_MULTIPLIER = 2.0
+
+async def process_client_queue(client_id):
+    global client_processing_flags, client_request_queues, client_last_backoff, active_connections
+    client_processing_flags[client_id] = True
+    websocket = active_connections.get(client_id)
+    while client_request_queues[client_id]:
+        timestamp, data = client_request_queues[client_id].popleft()
+        # Directly process the message (no LLM health check)
+        client_last_backoff[client_id] = MIN_BACKOFF  # Always reset backoff
+        try:
+            message_data = json.loads(data)
+            # If message_data is a list, process each message in the batch
+            if isinstance(message_data, list):
+                for single_message_data in message_data:
+                    await process_single_message(single_message_data, client_id, websocket)
+            else:
+                await process_single_message(message_data, client_id, websocket)
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to process message for client {client_id}: {e}")
+    client_processing_flags[client_id] = False
+
+async def process_single_message(message_data, client_id, websocket):
+    try:
+        message = MCPMessage(**message_data)
+        add_to_logs("incoming", message.message_type, message_data)
+        if message.message_type == "suggestion":
+            await handle_suggestion(message, websocket)
+        elif message.message_type == "continue":
+            await handle_continue(message, websocket)
+        elif message.message_type == "tdd_request":
+            await handle_tdd_request(message, websocket)
+        else:
+            error_msg = {
+                "error": f"Unsupported message type: {message.message_type}",
+                "message_type": "error",
+                "context": message.context.model_dump() if hasattr(message.context, "model_dump") else message.context.dict()
+            }
+            add_to_logs("outgoing", "error", error_msg)
+            try:
+                await websocket.send_text(json.dumps(error_msg))
+            except Exception as e:
+                logger.error(f"Failed to send error message on WebSocket: {e}")
+    except Exception as e:
+        logger.error(f"[ERROR] Exception in process_single_message for client {client_id}: {e}")
 
 async def handle_suggestion(message: MCPMessage, websocket: WebSocket):
     """Handle a suggestion message"""

@@ -33,6 +33,7 @@ class DevelopmentMonitorAgent:
             config_path: Path to the configuration file. If None, default config is used.
         """
         self.config = self._load_config(config_path)
+        self.llm_context_window = int(self.config.get("llm_context_window", 8192))
         self.llm_client = None
         self.development_context = {}
         self.verification_history = []
@@ -218,22 +219,39 @@ class DevelopmentMonitorAgent:
         
         return result
 
+
+
+    def _truncate_prompt_to_context_window(self, prompt: str) -> str:
+        """
+        Truncate the prompt to fit within the LLM context window (in tokens).
+        This is a simple approximation: 1 token ≈ 4 characters (for English text/code).
+        """
+        max_tokens = self.llm_context_window
+        # Approximate: 1 token ≈ 4 chars (conservative for code)
+        max_chars = max_tokens * 4
+        if len(prompt) > max_chars:
+            logger.warning(f"Prompt length ({len(prompt)} chars) exceeds context window ({max_tokens} tokens, ~{max_chars} chars). Truncating.")
+            return prompt[:max_chars]
+        return prompt
+
     def send_prompt_to_llm(self, prompt: str) -> Dict[str, Any]:
         """
         Send a prompt to the connected LLM and get the response.
-        
         Args:
             prompt: The prompt to send to the LLM
-            
         Returns:
             Dict containing the LLM response and metadata
         """
         if not self.llm_client:
             logger.warning("LLM client not connected. Connect first with connect_llm()")
             return {"error": "LLM client not connected"}
-        
+
+        import time
+        import psutil
         logger.info("Sending prompt to Ollama...")
-        
+        prompt = self._truncate_prompt_to_context_window(prompt)
+        logger.info(f"Prompt content: {prompt}")
+        start_time = time.time()
         try:
             url = f"{self.llm_client['endpoint']}/api/generate"
             data = {
@@ -241,34 +259,52 @@ class DevelopmentMonitorAgent:
                 "prompt": prompt,
                 "stream": False
             }
-            
-            response = requests.post(url, headers=self.llm_client["headers"], json=data)
-            
+            # Set timeout to 180 seconds (3 minutes)
+            response = requests.post(url, headers=self.llm_client["headers"], json=data, timeout=180)
+            elapsed = time.time() - start_time
+            logger.info(f"LLM request completed in {elapsed:.2f} seconds")
+            response_data = response.json()
+            logger.debug(f"LLM response: {response_data}")
             if response.status_code == 200:
-                response_data = response.json()
+                
                 return {
                     "success": True,
                     "response": response_data.get("response", ""),
                     "model": self.llm_client["model"],
                     "metadata": {
                         "eval_count": response_data.get("eval_count", 0),
-                        "eval_duration": response_data.get("eval_duration", 0)
+                        "eval_duration": response_data.get("eval_duration", 0),
+                        "llm_request_time": elapsed
                     }
                 }
             else:
+                # Log system resource usage on error
+                cpu = psutil.cpu_percent(interval=0.1)
+                mem = psutil.virtual_memory().percent
                 logger.error(f"Failed to get response from Ollama. Status code: {response.status_code}")
+                logger.error(f"Response: {response.text}")
+                logger.error(f"System CPU: {cpu}%, Memory: {mem}% at LLM error time")
                 return {
                     "success": False,
                     "error": f"API error: {response.status_code}",
-                    "response": response.text
+                    "response": response.text,
+                    "llm_request_time": elapsed,
+                    "system_cpu": cpu,
+                    "system_mem": mem
                 }
-                
         except Exception as e:
+            elapsed = time.time() - start_time
+            cpu = psutil.cpu_percent(interval=0.1)
+            mem = psutil.virtual_memory().percent
             logger.error(f"Error sending prompt to Ollama: {e}")
+            logger.error(f"System CPU: {cpu}%, Memory: {mem}% at LLM exception time")
             return {
                 "success": False,
                 "error": str(e),
-                "response": None
+                "response": None,
+                "llm_request_time": elapsed,
+                "system_cpu": cpu,
+                "system_mem": mem
             }
     
     def capture_and_analyze_output(self, ai_output: str, expected_behavior: str) -> Dict[str, Any]:
