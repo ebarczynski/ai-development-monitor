@@ -211,10 +211,12 @@ For the final iteration, conduct a comprehensive review:
     # Handle custom max_iterations by adapting prompts as needed
     if max_iterations != 5:
         if iteration == max_iterations:
-            # If this is the final iteration (regardless of number), use the comprehensive review
+            # Final iteration: always use comprehensive review
             iteration_prompt = iteration_prompts.get(5, "Conduct a comprehensive review of the code and tests.")
+        elif iteration == 1:
+            iteration_prompt = iteration_prompts.get(1, "Generate basic tests for the code.")
         else:
-            # Get the appropriate prompt for this iteration, or adapt based on percentage
+            # Adapt prompt based on progress through custom iterations
             progress_percentage = iteration / max_iterations
             if progress_percentage < 0.25:
                 iteration_prompt = iteration_prompts.get(1, "Generate basic tests for the code.")

@@ -41,87 +41,101 @@ def evaluate_tdd_results(tdd_tests: List[Dict[str, Any]], suggestion_code: str, 
     passed_tests = 0
     issues_detected = []
     recommendations = []
-    
+    max_iteration = 0
+
+    def strip_comments_and_docstrings(code: str) -> str:
+        # Remove Python and JS comments and docstrings for more accurate analysis
+        code = re.sub(r'""".*?"""|\'\'\'.*?\'\'\'|//.*?$|/\*.*?\*/', '', code, flags=re.DOTALL | re.MULTILINE)
+        code = re.sub(r'#.*', '', code)
+        return code
+
     # Analyze test content for each iteration
     for test_result in tdd_tests:
         test_code = test_result.get("test_code", "")
         iteration = test_result.get("iteration", 0)
-        
-        # Count assert statements as a proxy for number of tests
-        assert_count = len(re.findall(r'assert\s+', test_code))
-        total_tests += assert_count
-        
-        # Check for error indicators in the tests
+        max_iteration = max(max_iteration, iteration)
+        code_no_comments = strip_comments_and_docstrings(test_code)
+
+        # Count test functions (Python, JS, TS)
+        test_func_count = len(re.findall(r'def\s+test_|function\s+test|it\s*\(|test\s*\(', code_no_comments))
+        # Count assert statements
+        assert_count = len(re.findall(r'assert\s+', code_no_comments))
+        # Use the max of test functions and asserts as proxy for number of tests
+        test_count = max(test_func_count, assert_count)
+        total_tests += test_count
+
+        # Detect clear pass/fail patterns
+        # Consider a test failed if it contains 'assert False', 'fail()', or similar patterns
+        fail_patterns = [r'assert\s+False', r'fail\s*\(', r'pytest\.fail', r'raise\s+AssertionError']
+        fail_count = 0
+        for pat in fail_patterns:
+            fail_count += len(re.findall(pat, code_no_comments))
+
+        # If no fail patterns, assume test passes (for LLM-generated code)
+        if fail_count == 0 and test_count > 0:
+            passed_tests += test_count
+
+        # Check for error indicators in the tests (excluding comments)
         error_indicators = [
             "raises", "raise", "exception", "Error", "error", 
             "fail", "invalid", "incorrect", "wrong"
         ]
-        
+        for indicator in error_indicators:
+            # Only match outside comments/docstrings
+            if re.search(rf'\b{indicator}\b', code_no_comments, re.IGNORECASE):
+                # Only add if not already counted as a fail
+                issues_detected.append(f"Potential issue in iteration {iteration}: {indicator}")
+
         # For later iterations (3+), look for performance concerns
         if iteration >= 3:
             performance_indicators = [
                 "performance", "timeout", "slow", "optimize", 
                 "efficient", "complexity", "stack overflow"
             ]
-            
             for indicator in performance_indicators:
-                if indicator in test_code:
+                if re.search(rf'\b{indicator}\b', code_no_comments, re.IGNORECASE):
                     issues_detected.append(f"Performance concern identified in iteration {iteration}: {indicator}")
-        
-        # Check if test errors were expected or actual problems
-        for indicator in error_indicators:
-            matches = re.findall(rf'(?:assert|with pytest\.raises).*{indicator}', test_code)
-            if matches and iteration < 3:
-                # In early iterations, these are likely expected validations
-                passed_tests += len(matches)
-            elif matches:
-                # In later iterations, may indicate problems
-                issues_detected.append(f"Potential issue in iteration {iteration}: {indicator}")
-    
-    # For the last iteration (usually 5), check overall assessment
-    final_tests = [t for t in tdd_tests if t.get("iteration", 0) == len(tdd_tests)]
+
+    # For the last iteration (max_iteration), check overall assessment
+    final_tests = [t for t in tdd_tests if t.get("iteration", 0) == max_iteration]
     if final_tests:
         final_code = final_tests[0].get("test_code", "")
-        
+        code_no_comments = strip_comments_and_docstrings(final_code)
         # Check for positive indicators in the final assessment
         positive_indicators = [
             "complete", "comprehensive", "robust", "reliable", 
             "correct", "accurate", "proper", "good"
         ]
-        
         for indicator in positive_indicators:
-            if indicator in final_code:
+            if re.search(rf'\b{indicator}\b', code_no_comments, re.IGNORECASE):
                 recommendations.append(f"Final assessment indicates code is {indicator}")
-    
+
     # Calculate TDD score
     tdd_score = 0.5  # default neutral
+    task_relevance = assess_task_relevance(tdd_tests, suggestion_code, task_description)
     if total_tests > 0:
         # Base score on apparent test passage and completeness
         base_score = min(0.8, (passed_tests / total_tests) if total_tests > 0 else 0.4)
-        
         # Adjust score down for major issues
         issue_penalty = min(0.5, len(issues_detected) * 0.1)
-        
-        # Determine relevance to task description
-        task_relevance = assess_task_relevance(tdd_tests, suggestion_code, task_description)
-        logger.debug(f"Task relevance score: {task_relevance:.2f}")
-        
         # Final score is based on test results, adjusted for issues and task relevance
         tdd_score = max(0.1, base_score - issue_penalty) * task_relevance
-    
+
     # Generate additional recommendations
     if tdd_score < 0.4:
         recommendations.append("Consider revising code based on test failures or low relevance to task")
     elif tdd_score > 0.7:
         recommendations.append("Code performs well in tests and aligns with task requirements")
-    
+    elif not recommendations:
+        recommendations.append("Code has mixed test results - consider reviewing manually")
+
     # Determine accept recommendation
     accept = tdd_score >= 0.6
-    
-    # Add task relevance to the output
+
+    # Add task relevance to the output (always set explicitly)
     return {
         "tdd_score": tdd_score,
-        "task_relevance": task_relevance if 'task_relevance' in locals() else 1.0,
+        "task_relevance": task_relevance,
         "issues_detected": issues_detected,
         "recommendations": recommendations,
         "accept": accept
