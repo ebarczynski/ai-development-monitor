@@ -2,11 +2,14 @@
 TDD Results Evaluator
 
 This module helps evaluate TDD test results and integrate them into the suggestion evaluation process.
+It includes improved task analysis and test quality metrics.
 """
 import logging
 import re
 from typing import Dict, List, Tuple, Any
-from task_relevance import assess_task_relevance
+from src.task_relevance import assess_task_relevance
+from src.task_analyzer import analyze_task_for_testing
+from src.test_quality_metrics import evaluate_test_quality
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -48,7 +51,24 @@ def evaluate_tdd_results(tdd_tests: List[Dict[str, Any]], suggestion_code: str, 
         code = re.sub(r'""".*?"""|\'\'\'.*?\'\'\'|//.*?$|/\*.*?\*/', '', code, flags=re.DOTALL | re.MULTILINE)
         code = re.sub(r'#.*', '', code)
         return code
-
+        
+    # Auto-detect language from code
+    detected_language = None
+    if suggestion_code:
+        for lang_pattern in [
+            (r'def\s+\w+.*:', "python"),
+            (r'function\s+\w+|\(\)\s*=>\s*{', "javascript"),
+            (r'import\s+{.*}\s+from|export\s+class', "typescript"),
+            (r'public\s+class|private\s+\w+\s+\w+', "java"),
+            (r'#include|namespace\s+\w+|::', "cpp"),
+            (r'fn\s+\w+|impl\s+|let\s+mut', "rust"),
+            (r'package\s+main|func\s+\w+', "go"),
+            (r'using\s+\w+|namespace\s+\w+', "csharp")
+        ]:
+            if re.search(lang_pattern[0], suggestion_code):
+                detected_language = lang_pattern[1]
+                break
+    
     # Analyze test content for each iteration
     for test_result in tdd_tests:
         test_code = test_result.get("test_code", "")
@@ -56,17 +76,43 @@ def evaluate_tdd_results(tdd_tests: List[Dict[str, Any]], suggestion_code: str, 
         max_iteration = max(max_iteration, iteration)
         code_no_comments = strip_comments_and_docstrings(test_code)
 
-        # Count test functions (Python, JS, TS)
-        test_func_count = len(re.findall(r'def\s+test_|function\s+test|it\s*\(|test\s*\(', code_no_comments))
-        # Count assert statements
-        assert_count = len(re.findall(r'assert\s+', code_no_comments))
+        # Count test functions (using more comprehensive patterns for multiple languages)
+        test_func_patterns = [
+            # Python
+            r'def\s+test_\w+', 
+            # JavaScript/TypeScript
+            r'function\s+test|it\s*\(|test\s*\(|describe\s*\(', 
+            # Java/C#
+            r'@Test|void\s+test\w+', 
+            # C++
+            r'TEST\s*\(|TEST_F\s*\(|BOOST_(?:AUTO_)?TEST_CASE',
+            # Rust
+            r'#\[test\]|fn\s+test_\w+'
+        ]
+        
+        test_func_count = 0
+        for pattern in test_func_patterns:
+            test_func_count += len(re.findall(pattern, code_no_comments))
+            
+        # Count assert statements (using more comprehensive patterns)
+        assert_patterns = [
+            r'assert\s+', r'expect\(', r'should\.', r'ASSERT_', r'EXPECT_',
+            r'assertEquals', r'assertTrue', r'assertFalse', r'assert!', r'assertThat'
+        ]
+        
+        assert_count = 0
+        for pattern in assert_patterns:
+            assert_count += len(re.findall(pattern, code_no_comments))
+            
         # Use the max of test functions and asserts as proxy for number of tests
         test_count = max(test_func_count, assert_count)
         total_tests += test_count
 
-        # Detect clear pass/fail patterns
-        # Consider a test failed if it contains 'assert False', 'fail()', or similar patterns
-        fail_patterns = [r'assert\s+False', r'fail\s*\(', r'pytest\.fail', r'raise\s+AssertionError']
+        # Detect clear pass/fail patterns across languages
+        fail_patterns = [
+            r'assert\s+False', r'fail\s*\(', r'pytest\.fail', r'raise\s+AssertionError',
+            r'Assert\.Fail', r'assertFalse\(true\)', r'FAIL\(', r'expect\(.*\)\.not\.toBe'
+        ]
         fail_count = 0
         for pat in fail_patterns:
             fail_count += len(re.findall(pat, code_no_comments))
@@ -78,7 +124,8 @@ def evaluate_tdd_results(tdd_tests: List[Dict[str, Any]], suggestion_code: str, 
         # Check for error indicators in the tests (excluding comments)
         error_indicators = [
             "raises", "raise", "exception", "Error", "error", 
-            "fail", "invalid", "incorrect", "wrong"
+            "fail", "invalid", "incorrect", "wrong", "exception",
+            "panic", "throw", "throws"
         ]
         for indicator in error_indicators:
             # Only match outside comments/docstrings
@@ -90,7 +137,7 @@ def evaluate_tdd_results(tdd_tests: List[Dict[str, Any]], suggestion_code: str, 
         if iteration >= 3:
             performance_indicators = [
                 "performance", "timeout", "slow", "optimize", 
-                "efficient", "complexity", "stack overflow"
+                "efficient", "complexity", "stack overflow", "memory leak"
             ]
             for indicator in performance_indicators:
                 if re.search(rf'\b{indicator}\b', code_no_comments, re.IGNORECASE):
@@ -104,22 +151,83 @@ def evaluate_tdd_results(tdd_tests: List[Dict[str, Any]], suggestion_code: str, 
         # Check for positive indicators in the final assessment
         positive_indicators = [
             "complete", "comprehensive", "robust", "reliable", 
-            "correct", "accurate", "proper", "good"
+            "correct", "accurate", "proper", "good", "successful", "passes"
         ]
         for indicator in positive_indicators:
             if re.search(rf'\b{indicator}\b', code_no_comments, re.IGNORECASE):
                 recommendations.append(f"Final assessment indicates code is {indicator}")
 
+    # Calculate task relevance
+    task_relevance = assess_task_relevance(tdd_tests, suggestion_code, task_description)
+    
+    # Apply improved task analysis for better insights
+    task_analysis = {}
+    if task_description:
+        task_analysis = analyze_task_for_testing(
+            task_description, 
+            suggestion_code, 
+            detected_language
+        )
+        
+        # Add domain-specific insights if available
+        if task_analysis.get("domain"):
+            domain = task_analysis.get("domain")
+            recommendations.append(f"Task identified as {domain} domain")
+        
+        # Add analysis insights to recommendations if available
+        if task_analysis.get("edge_cases"):
+            edge_case_recs = [
+                f"Consider testing: {case}" for case in task_analysis.get("edge_cases", [])[:3]
+            ]
+            recommendations.extend(edge_case_recs)
+            
+        # Add specific test scenarios if available
+        if task_analysis.get("test_scenarios"):
+            test_scenario_recs = [
+                f"Suggested test: {scenario}" for scenario in task_analysis.get("test_scenarios", [])[:2]
+            ]
+            recommendations.extend(test_scenario_recs)
+    
+    # Calculate test quality metrics for the final iteration
+    test_quality = {}
+    quality_score = 0.5  # Default quality score
+    
+    if final_tests:
+        final_code = final_tests[0].get("test_code", "")
+        test_quality = evaluate_test_quality(
+            final_code, 
+            task_description, 
+            suggestion_code, 
+            detected_language
+        )
+        quality_score = test_quality.get("overall_quality", 0.5)
+        
+        # Add quality insights to recommendations
+        if test_quality.get("strengths"):
+            recommendations.extend(test_quality.get("strengths", [])[:2])
+        if test_quality.get("weaknesses"):
+            recommendations.extend([f"Improve: {w}" for w in test_quality.get("weaknesses", [])[:2]])
+            
+        # Add newly available metrics if present
+        if test_quality.get("test_isolation_score") and test_quality.get("test_isolation_score") < 0.5:
+            recommendations.append("Tests could benefit from better isolation")
+            
+        if test_quality.get("task_alignment_score") and test_quality.get("task_alignment_score") < 0.6:
+            recommendations.append("Tests should align better with the task requirements")
+            
+        if test_quality.get("detected_language"):
+            detected_language = test_quality.get("detected_language")
+
     # Calculate TDD score
     tdd_score = 0.5  # default neutral
-    task_relevance = assess_task_relevance(tdd_tests, suggestion_code, task_description)
     if total_tests > 0:
         # Base score on apparent test passage and completeness
         base_score = min(0.8, (passed_tests / total_tests) if total_tests > 0 else 0.4)
         # Adjust score down for major issues
         issue_penalty = min(0.5, len(issues_detected) * 0.1)
-        # Final score is based on test results, adjusted for issues and task relevance
-        tdd_score = max(0.1, base_score - issue_penalty) * task_relevance
+        # Final score combines test results, task relevance, and test quality
+        test_result_score = max(0.1, base_score - issue_penalty)
+        tdd_score = 0.5 * test_result_score + 0.3 * task_relevance + 0.2 * quality_score
 
     # Generate additional recommendations
     if tdd_score < 0.4:
@@ -132,14 +240,33 @@ def evaluate_tdd_results(tdd_tests: List[Dict[str, Any]], suggestion_code: str, 
     # Determine accept recommendation
     accept = tdd_score >= 0.6
 
-    # Add task relevance to the output (always set explicitly)
-    return {
+    # Prepare the evaluation result with enhanced metrics
+    result = {
         "tdd_score": tdd_score,
         "task_relevance": task_relevance,
+        "test_quality": quality_score,
         "issues_detected": issues_detected,
         "recommendations": recommendations,
-        "accept": accept
+        "accept": accept,
+        "detected_language": detected_language,
+        "metrics": {
+            "test_count": total_tests,
+            "passed_tests": passed_tests,
+            "quality_metrics": test_quality
+        }
     }
+    
+    # Include task analysis if available
+    if task_analysis:
+        result["task_analysis"] = {
+            "key_requirements": task_analysis.get("key_requirements", []),
+            "concepts": task_analysis.get("concepts", []),
+            "edge_cases": task_analysis.get("edge_cases", []),
+            "domain": task_analysis.get("domain", "general"),
+            "detected_language": task_analysis.get("detected_language", detected_language)
+        }
+        
+    return result
 
 def combine_evaluation_results(tdd_evaluation: Dict[str, Any], llm_evaluation: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
     """
@@ -176,9 +303,20 @@ def combine_evaluation_results(tdd_evaluation: Dict[str, Any], llm_evaluation: D
         tdd_weight = 0.7
         llm_weight = 0.3
         
+        # If we have test quality information, consider it in the weighting
+        test_quality = tdd_evaluation.get("test_quality", 0.5)
+        task_relevance = tdd_evaluation.get("task_relevance", 0.7)
+        
+        # Adjust weights based on test quality and task relevance
+        if test_quality > 0.7 and task_relevance > 0.7:
+            # If both quality and relevance are high, give TDD even more weight
+            tdd_weight = 0.8
+            llm_weight = 0.2
+            logger.info("Giving TDD results higher weight due to high test quality and task relevance")
+        
         # Calculate weighted score
         weighted_score = (tdd_score * tdd_weight) + (alignment_score * llm_weight)
-        
+            
         # Risk factors can still veto
         if hallucination_risk > 0.7 or recursive_risk > 0.7:
             final_accept = False
@@ -186,6 +324,9 @@ def combine_evaluation_results(tdd_evaluation: Dict[str, Any], llm_evaluation: D
         else:
             final_accept = weighted_score >= 0.6
             reason = f"Combined evaluation: TDD score={tdd_score:.2f}, alignment={alignment_score:.2f}"
+    
+    # Include language detection in the combined evaluation if available
+    detected_language = tdd_evaluation.get("detected_language")
     
     # Prepare combined evaluation
     combined_evaluation = {
@@ -196,7 +337,8 @@ def combine_evaluation_results(tdd_evaluation: Dict[str, Any], llm_evaluation: D
             "alignment_score": alignment_score,
             "tdd_score": tdd_score,
             "issues_detected": issues,
-            "recommendations": recommendations
+            "recommendations": recommendations,
+            "detected_language": detected_language
         },
         "reason": reason
     }
