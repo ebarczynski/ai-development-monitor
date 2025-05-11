@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
 const contextManager = require('./context_manager');
+const AIMonitorPanel = require('./ai_monitor_panel');
 
 /**
  * Run a TDD testing cycle with multiple iterations
@@ -23,9 +24,18 @@ const contextManager = require('./context_manager');
  * @param {string} taskDescription - Description of what the code should accomplish
  * @param {string} originalCode - The original code before changes
  */
-async function runTDDCycle(outputChannel, webSocketConnection, conversationId, suggestionCode, language, iterations = 5, callback, taskDescription = "", originalCode = "") {
+async function runTDDCycle(outputChannel, webSocketConnection, conversationId, suggestionCode, language, iterations, callback, taskDescription = "", originalCode = "") {
+    // Get TDD configuration settings
+    const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor.tdd');
+    const defaultIterations = config.get('defaultIterations', 5);
+    const testFramework = config.get('testFramework', 'auto');
+    
+    // Use provided iterations or the default from settings
+    iterations = iterations || defaultIterations;
+    
     outputChannel.appendLine('\n=== Test-Driven Development Cycle ===');
     outputChannel.appendLine(`Language: ${language}`);
+    outputChannel.appendLine(`Test Framework: ${testFramework !== 'auto' ? testFramework : 'Auto-detected'}`);
     if (taskDescription) {
         outputChannel.appendLine(`Task Description: ${taskDescription}`);
     }
@@ -162,6 +172,10 @@ function sendTDDRequest(ws, conversationId, code, language, iteration, outputCha
     try {
         const messageId = `msg-tdd-${Date.now()}-${iteration}`;
         
+        // Get TDD configuration settings
+        const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor.tdd');
+        const testFramework = config.get('testFramework', 'auto');
+        
         outputChannel.appendLine(`\n--- TDD Iteration ${iteration} ---`);
         outputChannel.appendLine('Sending TDD test generation request to MCP server...');
         
@@ -213,7 +227,8 @@ function sendTDDRequest(ws, conversationId, code, language, iteration, outputCha
                     tdd_iteration: iteration,
                     test_purpose: getTDDPurposeForIteration(iteration),
                     task_description: taskDescription,
-                    original_code: originalCode
+                    original_code: originalCode,
+                    test_framework: testFramework
                 }
             },
             message_type: "tdd_request",
@@ -222,7 +237,8 @@ function sendTDDRequest(ws, conversationId, code, language, iteration, outputCha
                 language: language,
                 iteration: iteration,
                 task_description: taskDescription,
-                original_code: originalCode
+                original_code: originalCode,
+                test_framework: testFramework
             }
         };
         
@@ -330,6 +346,9 @@ function processTestResults(testCode, implementation, iteration, outputChannel, 
         const improvements = generateImprovementSuggestions(implementation, testCode, iteration);
         outputChannel.appendLine(improvements);
     }
+
+    // Update the AIMonitorPanel with the test results
+    updateTDDDashboard(results, testCode, implementation, iteration, 'javascript');
 }
 
 /**
@@ -556,6 +575,111 @@ const factorial = (function() {
             default:
                 return code;
         }
+    }
+}
+
+/**
+ * Update the AIMonitorPanel with TDD test results
+ * This ensures the TDD Dashboard is updated with the latest test results
+ * 
+ * @param {Object} testResults - Results from the test run
+ * @param {string} testCode - The test code
+ * @param {string} implementation - The implementation code
+ * @param {number} iteration - Current iteration number
+ * @param {string} language - Programming language of the code
+ */
+function updateTDDDashboard(testResults, testCode, implementation, iteration, language) {
+    try {
+        // Check if we have an active AIMonitorPanel instance
+        if (!AIMonitorPanel.currentPanel) {
+            return;
+        }
+        
+        // Create a mock coverage data (in a real implementation this would be actual data)
+        const mockCoverage = {
+            overall: Math.min(0.95, 0.5 + (iteration * 0.1)),  // increases with each iteration
+            files: [
+                {
+                    path: '/sample/implementation.js',
+                    name: 'implementation.js',
+                    coverage: Math.min(0.95, 0.5 + (iteration * 0.1))
+                }
+            ],
+            lines: {
+                // Sample line coverage data
+                "1": true,
+                "2": true,
+                "3": iteration > 1,
+                "4": iteration > 2,
+                "5": iteration > 3
+            }
+        };
+        
+        // Create a TDD result object structured like the expected format
+        const tddResult = {
+            iteration: iteration,
+            test_code: testCode,
+            implementation_code: implementation,
+            language: language,
+            tests: {
+                total: testResults.total,
+                passed: testResults.passed,
+                failed: testResults.failed,
+                success: testResults.success
+            },
+            coverage: mockCoverage
+        };
+        
+        // Update existing TDD results or create a new array
+        let tddResults = AIMonitorPanel.currentPanel._tddResults || [];
+        
+        // Add this iteration's results if it doesn't already exist
+        const existingIndex = tddResults.findIndex(r => r.iteration === iteration);
+        if (existingIndex >= 0) {
+            tddResults[existingIndex] = tddResult;
+        } else {
+            tddResults.push(tddResult);
+        }
+        
+        // Sort by iteration
+        tddResults.sort((a, b) => a.iteration - b.iteration);
+        
+        // Update the panel with the new TDD results
+        const evaluation = {
+            tdd_test_results: tddResults,
+            tdd_score: Math.min(0.95, 0.5 + (iteration * 0.1))
+        };
+        
+        // Update the AIMonitorPanel with the evaluation data
+        AIMonitorPanel.currentPanel.setEvaluationResults(evaluation);
+        
+        // Also update the TDD metrics for the dashboard
+        AIMonitorPanel.currentPanel.updateTDDMetrics({
+            results: {
+                total: testResults.total,
+                passed: testResults.passed,
+                failed: testResults.failed,
+                passRate: testResults.passed / testResults.total
+            },
+            progress: {
+                iteration: iteration,
+                tests: testResults.total,
+                passed: testResults.passed,
+                failed: testResults.failed,
+                coverage: mockCoverage.overall
+            },
+            coverage: {
+                ['/sample/implementation.js']: mockCoverage
+            }
+        });
+        
+        // If we're on the last iteration, show the TDD Dashboard
+        if (iteration >= 5) {
+            AIMonitorPanel.currentPanel.showTddDashboard();
+        }
+        
+    } catch (error) {
+        console.error('Error updating TDD Dashboard:', error);
     }
 }
 

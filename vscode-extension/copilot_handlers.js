@@ -174,13 +174,10 @@ async function evaluateSuggestion(suggestion) {
             
             handleEvaluationResponse(response);
         } else {
-            // Fall back to API
-            Logger.info('MCP client not available, using REST API for evaluation', 'evaluation');
-            
-            const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
-            const apiUrl = config.get('apiUrl', 'http://localhost:5000');
-            
-            const response = await httpRequest(`${apiUrl}/evaluate`, 'POST', message);
+            // MCP client not available
+            Logger.error('MCP client not available for evaluation', 'evaluation');
+            vscode.window.showErrorMessage('Cannot evaluate suggestions: MCP connection is not available. Please check the server status.');
+            return null;
             
             if (response.statusCode === 200) {
                 Logger.info('Received evaluation from API', 'evaluation');
@@ -579,13 +576,10 @@ async function retryEvaluation() {
             Logger.info('Received response to Continue message', 'evaluation');
             handleEvaluationResponse(response);
         } else {
-            // Fall back to API
-            Logger.info('MCP client not available, using REST API for Continue', 'evaluation');
-            
-            const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
-            const apiUrl = config.get('apiUrl', 'http://localhost:5000');
-            
-            const response = await httpRequest(`${apiUrl}/evaluate`, 'POST', continueMessage);
+            // MCP client not available
+            Logger.error('MCP client not available for Continue function', 'evaluation');
+            vscode.window.showErrorMessage('Cannot process "Continue" action: MCP connection is not available. Please check the server status.');
+            return null;
             
             if (response.statusCode === 200) {
                 Logger.info('Received response to Continue from API', 'evaluation');

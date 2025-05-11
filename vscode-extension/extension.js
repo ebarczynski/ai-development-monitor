@@ -66,10 +66,27 @@ async function activate(context) {
         const panel = AIMonitorPanel.createOrShow(context);
         panel.addLogEntry('Panel opened', 'info');
     });
+    
+    // Register TDD Dashboard command
+    const showTddDashboardCommand = vscode.commands.registerCommand('ai-development-monitor.showTddDashboard', () => {
+        const panel = AIMonitorPanel.createOrShow(context);
+        panel.showTddDashboard();
+        panel.addLogEntry('TDD Dashboard opened', 'info');
+    });
 
     // Register diagnostic test command
     const diagnosticTest = require('./diagnostic_test');
     const runTestCommand = vscode.commands.registerCommand('ai-development-monitor.runDiagnosticTest', diagnosticTest.runDiagnosticTests);
+    
+    // Register command to retry MCP connection
+    const retryConnectionCommand = vscode.commands.registerCommand('ai-development-monitor.retryConnection', () => {
+        if (mcpClient) {
+            vscode.window.showInformationMessage('Attempting to reconnect to MCP server...');
+            mcpClient.connect().catch(err => {
+                vscode.window.showErrorMessage(`Failed to connect to MCP server: ${err.message}`);
+            });
+        }
+    });
     
     // Register debug command to show logs
     const showLogsCommand = vscode.commands.registerCommand('ai-development-monitor.showLogs', () => {
@@ -89,8 +106,10 @@ async function activate(context) {
         rejectCommand,
         showLogsCommand,
         showPanelCommand,
+        showTddDashboardCommand,
         statusBarItem,
-        runTestCommand
+        runTestCommand,
+        retryConnectionCommand
     );
     
     // Initialize MCP client if enabled
@@ -121,14 +140,14 @@ async function activate(context) {
             context.subscriptions.push(showStatsCommand);
         } catch (error) {
             Logger.error('Failed to connect to MCP server', error, 'mcp');
-            vscode.window.showWarningMessage('Failed to connect to MCP server. Falling back to REST API.');
-            // Fall back to REST API
-            await checkApiConnection();
+            vscode.window.showWarningMessage('Failed to connect to MCP server. Please check the server status.');
+            // Connection failure
+            // Do not proceed with API connection
         }
     } else {
-        // Use REST API
-        Logger.info('MCP disabled, using REST API', 'api');
-        await checkApiConnection();
+        // MCP is disabled in settings
+        Logger.info('MCP disabled in settings. Please enable MCP to use this extension.', 'api');
+        vscode.window.showWarningMessage('MCP is disabled in settings. This extension now requires MCP. Please enable it in settings to use the extension.');
     }
     
     const copilotHandlers = require('./copilot_handlers');
@@ -212,40 +231,177 @@ async function activate(context) {
 /**
  * Check connection to the AI Development Monitor API
  */
+/**
+ * This is now a stub function since we've removed REST API functionality
+ * Only MCP connections are supported in this version
+ */
 async function checkApiConnection() {
-    try {
-        const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
-        const apiUrl = config.get('apiUrl', 'http://localhost:5000');
-        
-        // Check status
-        const statusResponse = await httpRequest(`${apiUrl}/status`, 'GET');
-        
-        if (statusResponse.statusCode === 200) {
-            connectionStatus = true;
-            console.log('Successfully connected to AI Development Monitor API');
+    Logger.info('REST API functionality has been removed from this version', 'api');
+    connectionStatus = false;
+    
+    // Update the status bar to reflect MCP-only mode
+    updateStatusBar();
+    
+    return false;
+}
+
+/**
+ * Check if a server is available using a TCP check
+ */
+function checkServerAvailability(url) {
+    return new Promise(resolve => {
+        try {
+            const urlObj = new URL(url);
+            const hostname = urlObj.hostname;
+            const port = urlObj.port ? parseInt(urlObj.port) : (urlObj.protocol === 'https:' ? 443 : 80);
             
-            // If agent is not connected to LLM, try to connect
-            if (!statusResponse.data.agent_connected) {
-                await httpRequest(`${apiUrl}/connect`, 'POST');
-            }
-        } else {
-            connectionStatus = false;
-            console.error('Failed to connect to AI Development Monitor API');
+            Logger.debug(`Checking server availability at ${hostname}:${port}`, 'api');
+            
+            const net = require('net');
+            const socket = new net.Socket();
+            
+            // Set a short timeout for the connection attempt
+            socket.setTimeout(3000);
+            
+            socket.on('connect', () => {
+                Logger.debug('Server is available (TCP check successful)', 'api');
+                socket.destroy();
+                resolve(true);
+            });
+            
+            socket.on('timeout', () => {
+                Logger.debug('Server availability check timed out', 'api');
+                socket.destroy();
+                resolve(false);
+            });
+            
+            socket.on('error', (error) => {
+                Logger.debug(`Server is unavailable: ${error.message}`, 'api');
+                socket.destroy();
+                resolve(false);
+            });
+            
+            // Try to connect
+            socket.connect(port, hostname);
+            
+        } catch (error) {
+            Logger.error('Error in server availability check', error, 'api');
+            resolve(false);
         }
-    } catch (error) {
-        connectionStatus = false;
-        console.error('Error connecting to AI Development Monitor API:', error.message);
-        vscode.window.showErrorMessage('Failed to connect to AI Development Monitor. Make sure the API server is running.');
+    });
+}
+
+/**
+ * Try to start the server automatically
+ */
+function tryStartServer() {
+    // Get workspace root folder
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) {
+        vscode.window.showErrorMessage('No workspace folder found to start server');
+        return;
     }
     
-    updateStatusBar();
-    return connectionStatus;
+    const workspaceRoot = workspaceFolders[0].uri.fsPath;
+    
+    // Look for start scripts
+    const fs = require('fs');
+    const path = require('path');
+    
+    const startScripts = [
+        path.join(workspaceRoot, 'start_server.sh'),
+        path.join(workspaceRoot, 'start_web_server.sh'),
+        path.join(workspaceRoot, '..', 'start_server.sh')
+    ];
+    
+    let scriptToRun = null;
+    for (const script of startScripts) {
+        try {
+            if (fs.existsSync(script)) {
+                scriptToRun = script;
+                break;
+            }
+        } catch (error) {
+            console.error(`Error checking script ${script}:`, error);
+        }
+    }
+    
+    if (!scriptToRun) {
+        vscode.window.showErrorMessage(
+            'Could not find server start script. Start the server manually and try again.'
+        );
+        return;
+    }
+    
+    // Execute the script
+    const terminal = vscode.window.createTerminal('AI Development Monitor Server');
+    terminal.show();
+    
+    // Make script executable if needed
+    terminal.sendText(`chmod +x "${scriptToRun}"`);
+    terminal.sendText(`"${scriptToRun}"`);
+    
+    vscode.window.showInformationMessage(
+        'Starting the server. Wait a moment and then check the connection.',
+        'Check Connection'
+    ).then(selection => {
+        if (selection === 'Check Connection') {
+            // Wait for server to start up
+            setTimeout(() => {
+                checkApiConnection();
+            }, 5000);
+        }
+    });
 }
-        
+
+/**
+ * Show troubleshooting information to help users resolve connection issues
+ */
+function showTroubleshootingInfo() {
+    const troubleshootingInfo = [
+        '# AI Development Monitor Connection Troubleshooting',
+        '',
+        '## Common Issues',
+        '1. **Server not running** - Start the server with `./start_server.sh`',
+        '2. **Wrong API URL** - Check the `apiUrl` setting in extension configuration',
+        '3. **Port already in use** - Check if another process is using port 5000',
+        '4. **Server crashed** - Check server logs for errors',
+        '',
+        '## How to Start the Server',
+        '1. Open a terminal in the project root',
+        '2. Run the start script: `./start_server.sh`',
+        '3. Wait for the server to initialize',
+        '4. Check connection from the extension',
+        '',
+        '## Configuration',
+        'Check your `settings.json` for proper configuration:',
+        '```json',
+        '{',
+        '  "aiDevelopmentMonitor.mcpUrl": "ws://localhost:5001/ws",',
+        '  "aiDevelopmentMonitor.apiUrl": "http://localhost:5000",',
+        '  "aiDevelopmentMonitor.apiTimeout": 5000',
+        '}',
+        '```'
+    ].join('\n');
+    
+    // Create a new untitled markdown file with the troubleshooting info
+    vscode.workspace.openTextDocument({
+        content: troubleshootingInfo,
+        language: 'markdown'
+    }).then(doc => {
+        vscode.window.showTextDocument(doc);
+    });
+}
+
 /**
  * Make an HTTP request using built-in http/https modules
+ * @param {string} url - The URL to request
+ * @param {string} method - HTTP method (GET, POST, etc)
+ * @param {object} data - Data to send (for POST/PUT)
+ * @param {number} timeoutMs - Timeout in milliseconds
+ * @returns {Promise<object>} - Response with statusCode and data
  */
-function httpRequest(url, method, data = null) {
+function httpRequest(url, method, data = null, timeoutMs = 10000) {
     return new Promise((resolve, reject) => {
         const urlObj = new URL(url);
         const options = {
@@ -255,10 +411,13 @@ function httpRequest(url, method, data = null) {
             method: method,
             headers: {
                 'Content-Type': 'application/json'
-            }
+            },
+            timeout: timeoutMs // Set request timeout
         };
         
         const client = urlObj.protocol === 'https:' ? https : http;
+        
+        Logger.debug(`Making ${method} request to ${url}`, 'api');
         
         const req = client.request(options, (res) => {
             let data = '';
@@ -282,18 +441,26 @@ function httpRequest(url, method, data = null) {
             });
         });
         
-        req.on('error', (e) => {
-            reject(e);
+        // Set timeout handler
+        req.on('timeout', () => {
+            Logger.error(`Request to ${url} timed out after ${timeoutMs}ms`, null, 'api');
+            req.destroy();
+            reject(new Error('Request timed out'));
+        });
+        
+        req.on('error', (error) => {
+            Logger.error(`Request error: ${error.message}`, error, 'api');
+            reject(error);
         });
         
         if (data) {
-            req.write(JSON.stringify(data));
+            const postData = JSON.stringify(data);
+            req.write(postData);
         }
         
         req.end();
     });
 }
-
 
 /**
  * Enable the AI Development Monitor
@@ -481,9 +648,9 @@ async function evaluateCopilotSuggestion() {
                         return;
                     }
                 }
-            } else if (!await checkApiConnection()) {
-                Logger.error('Cannot evaluate suggestion: REST API connection failed', null, 'evaluation');
-                vscode.window.showErrorMessage('Cannot evaluate suggestion: AI Development Monitor is disconnected');
+            } else {
+                Logger.error('Cannot evaluate suggestion: MCP connection is not available', null, 'evaluation');
+                vscode.window.showErrorMessage('Cannot evaluate suggestion: MCP is disconnected. Please check server status.');
                 return;
             }
         }
@@ -549,7 +716,7 @@ async function evaluateCopilotSuggestion() {
             
             let response;
             
-            // Use MCP if available, otherwise fall back to REST API
+            // Use MCP if available and connected
             const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
             if (config.get('useMcp', true) && mcpClient && mcpClient.connected) {
                 Logger.info('Sending evaluation request via MCP', 'mcp');
@@ -567,7 +734,7 @@ async function evaluateCopilotSuggestion() {
                     Logger.debug('Received MCP evaluation response', 'mcp');
                     Logger.logObject('DEBUG', 'MCP Response', response, 'mcp');
                     
-                    // Format the response to match the REST API format for compatibility
+                    // Process the MCP response
                     lastEvaluation = {
                         accept: response.content.accept,
                         evaluation: {
@@ -586,37 +753,23 @@ async function evaluateCopilotSuggestion() {
                     };
                 } catch (error) {
                     Logger.error('Error during MCP evaluation', error, 'mcp');
-                    vscode.window.showErrorMessage(`Error evaluating with MCP: ${error.message}. Falling back to REST API.`);
+                    vscode.window.showErrorMessage(`Error evaluating with MCP: ${error.message}. Please check the server status.`);
                     
-                    // Fall back to REST API
-                    await useFallbackRestApi();
+                    // Don't proceed with evaluation
+                    return null;
                 }
             } else {
-                // Send to AI Development Monitor API using REST
-                await useFallbackRestApi();
+                // MCP is not connected
+                Logger.warn("MCP client is not connected", 'mcp');
+                vscode.window.showErrorMessage("MCP connection is not available. Please check the server status.");
+                return null;
             }
             
-            // Helper function for REST API fallback
+            // Helper function for REST API fallback - now just a stub since we've removed REST API fallback
             async function useFallbackRestApi() {
-                Logger.info('Using REST API fallback for evaluation', 'api');
-                const apiUrl = config.get('apiUrl', 'http://localhost:5000');
-                
-                try {
-                    const httpResponse = await httpRequest(`${apiUrl}/evaluate`, 'POST', {
-                        original_code: fullText,
-                        proposed_changes: proposedChanges,
-                        task_description: taskDescription
-                    });
-                    
-                    Logger.debug('Received REST API evaluation response', 'api');
-                    Logger.logObject('DEBUG', 'REST API Response', httpResponse, 'api');
-                    
-                    lastEvaluation = httpResponse.data;
-                } catch (error) {
-                    Logger.error('Error during REST API evaluation', error, 'api');
-                    vscode.window.showErrorMessage(`Error evaluating with REST API: ${error.message}`);
-                    throw error; // Re-throw to exit the process
-                }
+                Logger.info('REST API fallback has been removed from this version', 'api');
+                vscode.window.showErrorMessage("REST API fallback functionality has been removed. Please ensure the MCP server is running.");
+                return null;
             }
             
             // Show results

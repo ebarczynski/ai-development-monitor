@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const tddExtension = require('./tdd_extension');
 const OptimizedMCPClient = require('./optimized_mcp_client');
+const AIMonitorPanel = require('./ai_monitor_panel');
 
 /**
  * Diagnostic test function to check extension capabilities
@@ -390,8 +391,8 @@ async function runDiagnosticTests() {
                     index: i
                 };
                 
-                // Use evaluation message type instead of ping (which is not supported by server)
-                batchPromises.push(optimizedClient.sendMessage('evaluation', smallContent, null, 1)); // 1 = MEDIUM priority
+                // Use suggestion message type which is better supported by server
+                batchPromises.push(optimizedClient.sendMessage('suggestion', smallContent, null, 1)); // 1 = MEDIUM priority
             }
             
             // Wait for all messages to complete

@@ -66,16 +66,13 @@ async function evaluateChatSuggestion(chatContext) {
         const result = await notificationHandler.withProgress('Evaluating Copilot Chat suggestion', async (progress) => {
             // Send to MCP server
             let result;
-            if (mcpClient) {
+            if (mcpClient && mcpClient.connected) {
                 progress.report({ increment: 30, message: "Sending to MCP server..." });
                 result = await mcpClient.sendSuggestion(suggestionData);
             } else {
-                // Fall back to REST API if MCP client not available
-                progress.report({ increment: 30, message: "Sending to REST API..." });
-                const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
-                const apiUrl = config.get('apiUrl', 'http://localhost:5000');
-                result = await httpRequest(`${apiUrl}/evaluate`, 'POST', suggestionData);
-                result = result.data;
+                // MCP client not available or not connected
+                vscode.window.showErrorMessage("MCP client is not connected. Please check the server status.");
+                return null;
             }
             
             progress.report({ increment: 70, message: "Processing response..." });

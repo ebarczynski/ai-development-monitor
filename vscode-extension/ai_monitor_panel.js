@@ -41,12 +41,50 @@ class AIMonitorPanel {
     _tddResults = [];
     
     /**
+     * @type {vscode.TextEditorDecorationType}
+     */
+    _coveredLineDecorationType = null;
+    
+    /**
+     * @type {vscode.TextEditorDecorationType}
+     */
+    _uncoveredLineDecorationType = null;
+    
+    /**
+     * @type {Object}
+     * Stores comprehensive TDD metrics and dashboard data
+     */
+    _tddMetrics = {
+        coverageData: {},
+        testProgressHistory: [],
+        activeConfiguration: {},
+        lastRunDate: null
+    };
+    
+    /**
      * @param {vscode.WebviewPanel} panel
      * @param {vscode.ExtensionContext} context
      */
     constructor(panel, context) {
         this._panel = panel;
         this._extensionContext = context;
+        
+        // Initialize TDD configuration with defaults
+        this._tddMetrics.activeConfiguration = {
+            autoRunTests: true,
+            showInlineCoverage: true,
+            defaultIterations: 5,
+            testFramework: 'auto'
+        };
+        
+        // Load existing configuration from settings if available
+        const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor.tdd');
+        if (config) {
+            this._tddMetrics.activeConfiguration.autoRunTests = config.get('autoRunTests', true);
+            this._tddMetrics.activeConfiguration.showInlineCoverage = config.get('showInlineCoverage', true);
+            this._tddMetrics.activeConfiguration.defaultIterations = config.get('defaultIterations', 5);
+            this._tddMetrics.activeConfiguration.testFramework = config.get('testFramework', 'auto');
+        }
         
         // Set the webview's initial html content
         this._update();
@@ -78,6 +116,12 @@ class AIMonitorPanel {
                         break;
                     case 'showTddDetails':
                         this.showTddDetails(message.iterationIndex);
+                        break;
+                    case 'updateTDDConfig':
+                        this.updateTDDConfiguration(message.setting, message.value);
+                        break;
+                    case 'openFile':
+                        this.openFileWithCoverage(message.filePath);
                         break;
                 }
             },
@@ -199,6 +243,367 @@ class AIMonitorPanel {
     }
     
     /**
+     * Update TDD metrics with new data
+     * @param {Object} metrics TDD metrics data
+     * @param {Object} options Additional options
+     */
+    updateTDDMetrics(metrics, options = {}) {
+        // Update coverage data if provided
+        if (metrics.coverage) {
+            this._tddMetrics.coverageData = {
+                ...this._tddMetrics.coverageData,
+                ...metrics.coverage
+            };
+        }
+        
+        // Update test progress history
+        if (metrics.progress) {
+            // Add timestamp to progress data
+            const progressEntry = {
+                ...metrics.progress,
+                timestamp: new Date().getTime()
+            };
+            this._tddMetrics.testProgressHistory.push(progressEntry);
+            
+            // Limit history to last 100 entries
+            if (this._tddMetrics.testProgressHistory.length > 100) {
+                this._tddMetrics.testProgressHistory.shift();
+            }
+        }
+        
+        // Update active configuration
+        if (metrics.configuration) {
+            this._tddMetrics.activeConfiguration = {
+                ...this._tddMetrics.activeConfiguration,
+                ...metrics.configuration
+            };
+        }
+        
+        // Update last run date
+        this._tddMetrics.lastRunDate = new Date().getTime();
+        
+        // Add a log entry if results are included
+        if (metrics.results) {
+            const passRate = metrics.results.passRate || 0;
+            const message = `TDD Results: ${metrics.results.passed || 0}/${metrics.results.total || 0} tests passed (${Math.round(passRate * 100)}%)`;
+            const type = passRate >= 0.8 ? 'success' : passRate >= 0.5 ? 'warning' : 'error';
+            this.addLogEntry(message, type);
+        }
+        
+        // Update the panel
+        this._update();
+    }
+    
+    /**
+     * Update TDD configuration setting
+     * @param {string} setting The setting name
+     * @param {any} value The new value
+     */
+    updateTDDConfiguration(setting, value) {
+        // Update the configuration in the metrics object
+        if (this._tddMetrics.activeConfiguration === undefined) {
+            this._tddMetrics.activeConfiguration = {};
+        }
+        
+        this._tddMetrics.activeConfiguration[setting] = value;
+        
+        // Save to user settings
+        const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor.tdd');
+        config.update(setting, value, vscode.ConfigurationTarget.Global);
+        
+        // Log the change
+        this.addLogEntry(`Updated TDD configuration: ${setting} = ${value}`, 'info');
+        
+        // Update the panel
+        this._update();
+    }
+    
+    /**
+     * Open file with coverage highlighting
+     * @param {string} filePath Path to the file
+     */
+    openFileWithCoverage(filePath) {
+        try {
+            vscode.workspace.openTextDocument(filePath).then(doc => {
+                vscode.window.showTextDocument(doc).then(editor => {
+                    try {
+                        // If inline coverage is enabled, add coverage highlighting
+                        const showInlineCoverage = this._tddMetrics.activeConfiguration.showInlineCoverage;
+                        
+                        if (showInlineCoverage && this._tddMetrics.coverageData[filePath]) {
+                            const coverageData = this._tddMetrics.coverageData[filePath];
+                            
+                            // Apply decorations for covered and uncovered lines
+                            if (coverageData.lines) {
+                                this.applyCoverageHighlighting(editor, coverageData.lines);
+                            }
+                        }
+                    } catch (error) {
+                        Logger.error(`Error in coverage highlighting: ${error.message}`, 'tdd');
+                    }
+                }).catch(error => {
+                    Logger.error(`Error showing text document: ${error.message}`, 'tdd');
+                    vscode.window.showErrorMessage(`Failed to open document: ${error.message}`);
+                });
+            }).catch(error => {
+                Logger.error(`Error opening file for coverage: ${error.message}`, 'tdd');
+                vscode.window.showErrorMessage(`Failed to open file: ${error.message}`);
+            });
+        } catch (error) {
+            Logger.error(`Error in openFileWithCoverage: ${error.message}`, 'tdd');
+            vscode.window.showErrorMessage(`Error accessing file: ${error.message}`);
+        }
+    }
+    
+    /**
+     * Apply coverage highlighting to editor
+     * @param {vscode.TextEditor} editor The editor to apply decorations to
+     * @param {Object} coverageLines Coverage line data
+     */
+    applyCoverageHighlighting(editor, coverageLines) {
+        try {
+            // Create decoration types if they don't exist
+            if (!this._coveredLineDecorationType) {
+                this._coveredLineDecorationType = vscode.window.createTextEditorDecorationType({
+                    backgroundColor: 'rgba(80, 200, 120, 0.05)',
+                    isWholeLine: true,
+                    overviewRulerColor: 'rgba(80, 200, 120, 0.5)',
+                    overviewRulerLane: vscode.OverviewRulerLane.Right
+                });
+            }
+            
+            if (!this._uncoveredLineDecorationType) {
+                this._uncoveredLineDecorationType = vscode.window.createTextEditorDecorationType({
+                    backgroundColor: 'rgba(200, 100, 100, 0.05)',
+                    isWholeLine: true,
+                    overviewRulerColor: 'rgba(200, 100, 100, 0.5)',
+                    overviewRulerLane: vscode.OverviewRulerLane.Right
+                });
+            }
+            
+            // Create arrays for decorations
+            const coveredLines = [];
+            const uncoveredLines = [];
+            
+            // Sort lines into covered and uncovered
+            Object.keys(coverageLines).forEach(lineStr => {
+                const line = parseInt(lineStr);
+                const covered = coverageLines[lineStr];
+                
+                const range = new vscode.Range(
+                    new vscode.Position(line, 0),
+                    new vscode.Position(line, Number.MAX_VALUE)
+                );
+                
+                if (covered) {
+                    coveredLines.push(range);
+                } else {
+                    uncoveredLines.push(range);
+                }
+            });
+            
+            // Apply decorations
+            editor.setDecorations(this._coveredLineDecorationType, coveredLines);
+            editor.setDecorations(this._uncoveredLineDecorationType, uncoveredLines);
+        } catch (error) {
+            Logger.error(`Error applying coverage highlighting: ${error.message}`, 'tdd');
+            vscode.window.showErrorMessage(`Failed to apply coverage highlighting: ${error.message}`);
+        }
+    }
+    
+    /**
+     * Create HTML for the TDD Dashboard
+     * @returns {string} HTML content for the TDD Dashboard
+     */
+    _createTDDDashboardHtml() {
+        const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor.tdd');
+        const autoRunTests = config.get('autoRunTests', true);
+        const showInlineCoverage = config.get('showInlineCoverage', true);
+        const defaultIterations = config.get('defaultIterations', 5);
+        const testFramework = config.get('testFramework', 'auto');
+
+        // Gather TDD metrics from the stored results
+        const testMetrics = {
+            totalTests: 0,
+            passed: 0,
+            failed: 0,
+            iterations: this._tddResults.length,
+            coverage: 0,
+            testsByIteration: []
+        };
+
+        // Calculate metrics
+        if (this._tddResults.length > 0) {
+            this._tddResults.forEach(result => {
+                if (result.tests) {
+                    testMetrics.totalTests += result.tests.total || 0;
+                    testMetrics.passed += result.tests.passed || 0;
+                    testMetrics.failed += result.tests.failed || 0;
+                    
+                    testMetrics.testsByIteration.push({
+                        iteration: result.iteration,
+                        total: result.tests.total || 0,
+                        passed: result.tests.passed || 0,
+                        failed: result.tests.failed || 0,
+                        coverage: result.coverage?.overall || 0
+                    });
+                }
+                
+                if (result.coverage && result.coverage.overall) {
+                    testMetrics.coverage += result.coverage.overall;
+                }
+            });
+            
+            // Calculate average coverage
+            if (testMetrics.iterations > 0) {
+                testMetrics.coverage = Math.round((testMetrics.coverage / testMetrics.iterations) * 100) / 100;
+            }
+        }
+
+        // Create file coverage data for display
+        const coverageData = [];
+        this._tddResults.forEach(result => {
+            if (result.coverage && result.coverage.files) {
+                result.coverage.files.forEach(file => {
+                    if (!coverageData.find(f => f.path === file.path)) {
+                        coverageData.push(file);
+                    }
+                });
+            }
+        });
+
+        return `
+        <div class="panel tdd-dashboard-panel">
+            <h3>TDD Dashboard</h3>
+            
+            <div class="tdd-dashboard-content">
+                <div class="tdd-dashboard-summary">
+                    <div class="tdd-stat-box">
+                        <div class="tdd-stat-value">${testMetrics.iterations}</div>
+                        <div class="tdd-stat-label">Iterations</div>
+                    </div>
+                    <div class="tdd-stat-box">
+                        <div class="tdd-stat-value">${testMetrics.totalTests}</div>
+                        <div class="tdd-stat-label">Total Tests</div>
+                    </div>
+                    <div class="tdd-stat-box">
+                        <div class="tdd-stat-value">${testMetrics.passed}</div>
+                        <div class="tdd-stat-label">Passed</div>
+                    </div>
+                    <div class="tdd-stat-box">
+                        <div class="tdd-stat-value">${testMetrics.failed}</div>
+                        <div class="tdd-stat-label">Failed</div>
+                    </div>
+                    <div class="tdd-stat-box">
+                        <div class="tdd-stat-value">${testMetrics.coverage}%</div>
+                        <div class="tdd-stat-label">Avg Coverage</div>
+                    </div>
+                </div>
+                
+                <div class="tdd-config-section">
+                    <h4>TDD Configuration</h4>
+                    <div class="tdd-config-grid">
+                        <div class="tdd-config-item">
+                            <label>
+                                <input type="checkbox" class="tdd-config-toggle" data-setting="autoRunTests" ${autoRunTests ? 'checked' : ''}>
+                                Auto-run tests
+                            </label>
+                        </div>
+                        <div class="tdd-config-item">
+                            <label>
+                                <input type="checkbox" class="tdd-config-toggle" data-setting="showInlineCoverage" ${showInlineCoverage ? 'checked' : ''}>
+                                Show inline coverage
+                            </label>
+                        </div>
+                        <div class="tdd-config-item">
+                            <label>Default iterations:</label>
+                            <select class="tdd-config-select" data-setting="defaultIterations">
+                                <option value="3" ${defaultIterations === 3 ? 'selected' : ''}>3 iterations</option>
+                                <option value="5" ${defaultIterations === 5 ? 'selected' : ''}>5 iterations</option>
+                                <option value="10" ${defaultIterations === 10 ? 'selected' : ''}>10 iterations</option>
+                            </select>
+                        </div>
+                        <div class="tdd-config-item">
+                            <label>Test framework:</label>
+                            <select class="tdd-config-select" data-setting="testFramework">
+                                <option value="auto" ${testFramework === 'auto' ? 'selected' : ''}>Auto-detect</option>
+                                <option value="unittest" ${testFramework === 'unittest' ? 'selected' : ''}>Python unittest</option>
+                                <option value="pytest" ${testFramework === 'pytest' ? 'selected' : ''}>pytest</option>
+                                <option value="jest" ${testFramework === 'jest' ? 'selected' : ''}>Jest</option>
+                                <option value="mocha" ${testFramework === 'mocha' ? 'selected' : ''}>Mocha</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                
+                ${testMetrics.testsByIteration.length > 0 ? `
+                <div class="tdd-progress-section">
+                    <h4>Test Progress Over Time</h4>
+                    <div class="tdd-chart-container" id="tdd-progress-chart">
+                        <canvas id="progressChart"></canvas>
+                        <div id="chart-placeholder" class="chart-placeholder">
+                            <p>TDD Progress Chart</p>
+                            <p><small>Showing test results over ${testMetrics.iterations} iterations</small></p>
+                            <ul>
+                                <li>Total Tests: ${testMetrics.totalTests}</li>
+                                <li>Passed: ${testMetrics.passed}</li>
+                                <li>Failed: ${testMetrics.failed}</li>
+                                <li>Average Coverage: ${testMetrics.coverage}%</li>
+                            </ul>
+                            <p><small>Interactive chart visualization requires Chart.js</small></p>
+                        </div>
+                        <div id="tdd-chart-data" style="display:none;" data-metrics='${JSON.stringify(testMetrics.testsByIteration).replace(/'/g, "&#39;")}'></div>
+                    </div>
+                    <div class="chart-legend">
+                        <div class="chart-legend-item">
+                            <div class="chart-legend-color" style="background-color: #4CAF50;"></div>
+                            <span>Passed Tests</span>
+                        </div>
+                        <div class="chart-legend-item">
+                            <div class="chart-legend-color" style="background-color: #F44336;"></div>
+                            <span>Failed Tests</span>
+                        </div>
+                        <div class="chart-legend-item">
+                            <div class="chart-legend-color" style="background-color: #2196F3;"></div>
+                            <span>Coverage %</span>
+                        </div>
+                    </div>
+                </div>
+                ` : ''}
+                
+                ${coverageData.length > 0 ? `
+                <div class="tdd-coverage-section">
+                    <h4>Code Coverage</h4>
+                    <table class="tdd-coverage-table">
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Coverage</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${coverageData.map(file => `
+                            <tr>
+                                <td>
+                                    <span class="tdd-coverage-filename" data-path="${file.path}">${file.name || file.path.split('/').pop()}</span>
+                                </td>
+                                <td class="tdd-coverage-percent">${Math.round(file.coverage * 100)}%</td>
+                            </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                ` : ''}
+                
+                <div class="tdd-actions">
+                    <button id="runTDDTestBtn" class="vscode-button">Run TDD Test</button>
+                </div>
+            </div>
+        </div>
+        `;
+    }
+
+    /**
      * Update the webview content
      */
     _update() {
@@ -240,50 +645,50 @@ class AIMonitorPanel {
                             <div class="risk-meter">
                                 <div class="risk-fill" style="width: ${evaluation.hallucination_risk * 100}%"></div>
                             </div>
-                            <div class="risk-value">${Math.round(eval.hallucination_risk * 100)}%</div>
+                            <div class="risk-value">${Math.round(evaluation.hallucination_risk * 100)}%</div>
                         </div>
                         
                         <div class="risk-item">
                             <div class="risk-label">Recursive Risk:</div>
                             <div class="risk-meter">
-                                <div class="risk-fill" style="width: ${eval.recursive_risk * 100}%"></div>
+                                <div class="risk-fill" style="width: ${evaluation.recursive_risk * 100}%"></div>
                             </div>
-                            <div class="risk-value">${Math.round(eval.recursive_risk * 100)}%</div>
+                            <div class="risk-value">${Math.round(evaluation.recursive_risk * 100)}%</div>
                         </div>
                         
                         <div class="risk-item">
                             <div class="risk-label">Alignment Score:</div>
                             <div class="risk-meter">
-                                <div class="risk-fill" style="width: ${eval.alignment_score * 100}%"></div>
+                                <div class="risk-fill" style="width: ${evaluation.alignment_score * 100}%"></div>
                             </div>
-                            <div class="risk-value">${Math.round(eval.alignment_score * 100)}%</div>
+                            <div class="risk-value">${Math.round(evaluation.alignment_score * 100)}%</div>
                         </div>
                         
-                        ${eval.tdd_score !== undefined ? `
+                        ${evaluation.tdd_score !== undefined ? `
                         <div class="risk-item">
                             <div class="risk-label">TDD Score:</div>
                             <div class="risk-meter">
-                                <div class="risk-fill" style="width: ${eval.tdd_score * 100}%"></div>
+                                <div class="risk-fill" style="width: ${evaluation.tdd_score * 100}%"></div>
                             </div>
-                            <div class="risk-value">${Math.round(eval.tdd_score * 100)}%</div>
+                            <div class="risk-value">${Math.round(evaluation.tdd_score * 100)}%</div>
                         </div>
                         ` : ''}
                     </div>
                     
-                    ${eval.issues_detected && eval.issues_detected.length > 0 ? `
+                    ${evaluation.issues_detected && evaluation.issues_detected.length > 0 ? `
                     <div class="issues">
                         <h4>Issues Detected:</h4>
                         <ul>
-                            ${eval.issues_detected.map(issue => `<li>${issue}</li>`).join('')}
+                            ${evaluation.issues_detected.map(issue => `<li>${issue}</li>`).join('')}
                         </ul>
                     </div>
                     ` : ''}
                     
-                    ${eval.recommendations && eval.recommendations.length > 0 ? `
+                    ${evaluation.recommendations && evaluation.recommendations.length > 0 ? `
                     <div class="recommendations">
                         <h4>Recommendations:</h4>
                         <ul>
-                            ${eval.recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                            ${evaluation.recommendations.map(rec => `<li>${rec}</li>`).join('')}
                         </ul>
                     </div>
                     ` : ''}
@@ -322,6 +727,9 @@ class AIMonitorPanel {
                 <span class="log-message">${entry.message}</span>
             </div>
         `).join('');
+        
+        // Generate TDD Dashboard HTML
+        const tddDashboardHtml = this._createTDDDashboardHtml();
         
         // Complete HTML with CSS and JavaScript
         return `<!DOCTYPE html>
@@ -529,7 +937,180 @@ class AIMonitorPanel {
                     font-size: 0.9em;
                     color: var(--vscode-descriptionForeground);
                 }
+                
+                /* Tab styles */
+                .tab-container {
+                    margin-bottom: 16px;
+                }
+                
+                .tab-buttons {
+                    display: flex;
+                    border-bottom: 1px solid var(--vscode-panel-border);
+                }
+                
+                .tab-button {
+                    background-color: transparent;
+                    border: none;
+                    padding: 8px 16px;
+                    cursor: pointer;
+                    border-bottom: 2px solid transparent;
+                    margin-right: 4px;
+                    color: var(--vscode-foreground);
+                }
+                
+                .tab-button:hover {
+                    background-color: var(--vscode-list-hoverBackground);
+                }
+                
+                .tab-button.active {
+                    border-bottom: 2px solid var(--vscode-button-background);
+                    font-weight: bold;
+                }
+                
+                .tab-content {
+                    display: none;
+                    padding: 16px;
+                    background-color: var(--vscode-editor-background);
+                    border: 1px solid var(--vscode-panel-border);
+                    border-top: none;
+                }
+                
+                .tab-content.active {
+                    display: block;
+                }
+                
+                /* TDD Dashboard specific styles */
+                .tdd-dashboard-panel {
+                    padding: 16px;
+                }
+                
+                .tdd-dashboard-content {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 24px;
+                }
+                
+                .tdd-dashboard-summary {
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 16px;
+                    justify-content: space-between;
+                    margin-bottom: 8px;
+                }
+                
+                .tdd-stat-box {
+                    border: 1px solid var(--vscode-panel-border);
+                    border-radius: 4px;
+                    padding: 12px;
+                    min-width: 100px;
+                    text-align: center;
+                    flex: 1;
+                }
+                
+                .tdd-stat-value {
+                    font-size: 1.8em;
+                    font-weight: bold;
+                    margin-bottom: 4px;
+                }
+                
+                .tdd-stat-label {
+                    font-size: 0.9em;
+                    color: var(--vscode-descriptionForeground);
+                }
+                
+                .tdd-config-section, .tdd-progress-section, .tdd-coverage-section {
+                    border: 1px solid var(--vscode-panel-border);
+                    border-radius: 4px;
+                    padding: 16px;
+                }
+                
+                .tdd-config-section h4, .tdd-progress-section h4, .tdd-coverage-section h4 {
+                    margin-top: 0;
+                    margin-bottom: 12px;
+                }
+                
+                .tdd-config-grid {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 12px;
+                }
+                
+                .tdd-config-item {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 4px;
+                }
+                
+                .tdd-config-toggle {
+                    margin-right: 8px;
+                }
+                
+                .tdd-config-select {
+                    height: 28px;
+                    background-color: var(--vscode-input-background);
+                    color: var(--vscode-input-foreground);
+                    border: 1px solid var(--vscode-input-border);
+                    border-radius: 2px;
+                    padding: 0 8px;
+                }
+                
+                .tdd-chart-container {
+                    height: 200px;
+                    margin-bottom: 16px;
+                }
+                
+                .chart-placeholder {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100%;
+                    padding: 20px;
+                    background-color: var(--vscode-editor-background);
+                    border: 1px dashed var(--vscode-panel-border);
+                    border-radius: 4px;
+                    text-align: center;
+                }
+                
+                .chart-placeholder p {
+                    margin: 4px 0;
+                }
+                
+                .tdd-coverage-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                }
+                
+                .tdd-coverage-table th, .tdd-coverage-table td {
+                    text-align: left;
+                    padding: 8px;
+                    border-bottom: 1px solid var(--vscode-panel-border);
+                }
+                
+                .tdd-coverage-table th {
+                    font-weight: bold;
+                }
+                
+                .tdd-actions {
+                    display: flex;
+                    justify-content: flex-end;
+                    gap: 8px;
+                }
+                
+                .logs-container {
+                    max-height: 300px;
+                    overflow-y: auto;
+                    font-family: monospace;
+                }
             </style>
+            <script>
+                // Add Chart.js library for TDD Dashboard charts
+                const chartJsScript = document.createElement('script');
+                chartJsScript.src = 'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js';
+                chartJsScript.integrity = 'sha256-+8RZJLOzbQINNk2WMZVLgwucY+65abyEXlv1ffenl5g=';
+                chartJsScript.crossOrigin = 'anonymous';
+                document.head.appendChild(chartJsScript);
+            </script>
         </head>
         <body>
             <div class="container">
@@ -538,29 +1119,46 @@ class AIMonitorPanel {
                 <div class="toolbar">
                     <div>
                         <button id="runTestBtn">Run Diagnostic Test</button>
+                        <button id="openTddDashboardBtn">TDD Dashboard</button>
                     </div>
                     <div>
                         <button id="clearLogsBtn">Clear Logs</button>
                     </div>
                 </div>
                 
-                ${this._lastEvaluation ? `
-                <div class="panel evaluation-panel">
-                    <h3>Evaluation Results</h3>
-                    ${evaluationHtml}
-                </div>
-                ` : ''}
-                
-                ${this._tddResults.length > 0 ? `
-                <div class="panel tdd-panel">
-                    ${tddHtml}
-                </div>
-                ` : ''}
-                
-                <div class="panel logs-panel">
-                    <h3>Activity Log</h3>
-                    <div class="logs-container">
-                        ${logsHtml || '<div class="log-entry info"><span class="log-message">No activity recorded yet.</span></div>'}
+                <div class="tab-container">
+                    <div class="tab-buttons">
+                        <button class="tab-button active" data-tab="overview">Overview</button>
+                        <button class="tab-button" data-tab="tdd-dashboard">TDD Dashboard</button>
+                        <button class="tab-button" data-tab="logs">Logs</button>
+                    </div>
+                    
+                    <div class="tab-content active" id="overview">
+                        ${this._lastEvaluation ? `
+                        <div class="panel evaluation-panel">
+                            <h3>Evaluation Results</h3>
+                            ${evaluationHtml}
+                        </div>
+                        ` : ''}
+                        
+                        ${this._tddResults.length > 0 ? `
+                        <div class="panel tdd-panel">
+                            ${tddHtml}
+                        </div>
+                        ` : ''}
+                    </div>
+                    
+                    <div class="tab-content" id="tdd-dashboard">
+                        ${tddDashboardHtml}
+                    </div>
+                    
+                    <div class="tab-content" id="logs">
+                        <div class="panel logs-panel">
+                            <h3>Activity Log</h3>
+                            <div class="logs-container">
+                                ${logsHtml || '<div class="log-entry info"><span class="log-message">No activity recorded yet.</span></div>'}
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -577,6 +1175,11 @@ class AIMonitorPanel {
                         vscode.postMessage({ command: 'runTest' });
                     });
                     
+                    document.getElementById('openTddDashboardBtn').addEventListener('click', () => {
+                        // Switch to TDD dashboard tab
+                        setActiveTab('tdd-dashboard');
+                    });
+                    
                     // Add event listeners for all TDD view buttons
                     document.querySelectorAll('.tdd-view-btn').forEach(btn => {
                         btn.addEventListener('click', () => {
@@ -585,15 +1188,177 @@ class AIMonitorPanel {
                         });
                     });
                     
+                    // Tab switching functionality
+                    document.querySelectorAll('.tab-button').forEach(button => {
+                        button.addEventListener('click', () => {
+                            const tabId = button.getAttribute('data-tab');
+                            setActiveTab(tabId);
+                        });
+                    });
+                    
+                    function setActiveTab(tabId) {
+                        // Deactivate all tabs and buttons
+                        document.querySelectorAll('.tab-button').forEach(btn => {
+                            btn.classList.remove('active');
+                        });
+                        document.querySelectorAll('.tab-content').forEach(content => {
+                            content.classList.remove('active');
+                        });
+                        
+                        // Activate selected tab and button
+                        document.querySelector('.tab-button[data-tab="' + tabId + '"]').classList.add('active');
+                        document.getElementById(tabId).classList.add('active');
+                    }
+                    
+                    // TDD Dashboard functionality
+                    function setupTDDDashboard() {
+                        // Setup configuration buttons
+                        var toggles = document.querySelectorAll('.tdd-config-toggle');
+                        if (toggles) {
+                            toggles.forEach(function(toggle) {
+                                toggle.addEventListener('click', function() {
+                                    var setting = toggle.getAttribute('data-setting');
+                                    var value = toggle.checked;
+                                    vscode.postMessage({ 
+                                        command: 'updateTDDConfig', 
+                                        setting: setting,
+                                        value: value 
+                                    });
+                                });
+                            });
+                        }
+                        
+                        // Setup configuration dropdowns
+                        var selects = document.querySelectorAll('.tdd-config-select');
+                        if (selects) {
+                            selects.forEach(function(select) {
+                                select.addEventListener('change', function() {
+                                    var setting = select.getAttribute('data-setting');
+                                    var value = select.value;
+                                    vscode.postMessage({ 
+                                        command: 'updateTDDConfig', 
+                                        setting: setting,
+                                        value: value 
+                                    });
+                                });
+                            });
+                        }
+                        
+                        // Setup coverage file links
+                        var links = document.querySelectorAll('.tdd-coverage-filename');
+                        if (links) {
+                            links.forEach(function(link) {
+                                link.addEventListener('click', function(e) {
+                                    e.preventDefault();
+                                    var filePath = link.getAttribute('data-path');
+                                    vscode.postMessage({ 
+                                        command: 'openFile', 
+                                        filePath: filePath
+                                    });
+                                });
+                            });
+                        }
+
+                        // Setup TDD test button
+                        var runTddTestBtn = document.getElementById('runTDDTestBtn');
+                        if (runTddTestBtn) {
+                            runTddTestBtn.addEventListener('click', function() {
+                                vscode.postMessage({ command: 'runTest' });
+                            });
+                        }
+                    }
+                    
+                    // Call setup function after DOM is fully loaded
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', setupTDDDashboard);
+                    } else {
+                        setupTDDDashboard();
+                    }
+                    
                     // Scroll logs panel to bottom
                     const logsPanel = document.querySelector('.logs-panel');
                     if (logsPanel) {
                         logsPanel.scrollTop = logsPanel.scrollHeight;
                     }
+
+                    // Initialize TDD progress chart if element exists
+                    function initProgressChart() {
+                        // Simple placeholder function - we'll use static chart for now
+                        // to avoid potential JS errors with Chart.js integration
+                        const placeholder = document.getElementById('chart-placeholder');
+                        if (placeholder) {
+                            placeholder.style.display = 'flex';
+                        }
+                        
+                        const canvas = document.getElementById('progressChart');
+                        if (canvas) {
+                            canvas.style.display = 'none';
+                        }
+                    }
+                    
+                    // Initialize chart if we're on the TDD dashboard tab
+                    if (document.getElementById('progressChart')) {
+                        initProgressChart();
+                    }
+                    
+                    // Add event listener for tab button to initialize chart when TDD tab is shown
+                    document.querySelectorAll('.tab-button').forEach(function(btn) {
+                        btn.addEventListener('click', function() {
+                            if (btn.getAttribute('data-tab') === 'tdd-dashboard') {
+                                setTimeout(initProgressChart, 100);
+                            }
+                        });
+                    });
+                    
+                    // Add event listener for run TDD test button
+                    const runTddBtn = document.getElementById('runTDDTestBtn');
+                    if (runTddBtn) {
+                        runTddBtn.addEventListener('click', () => {
+                            vscode.postMessage({ command: 'runTest' });
+                        });
+                    }
+
+                    // Handle messages from the extension
+                    window.addEventListener('message', event => {
+                        const message = event.data;
+                        
+                        switch (message.command) {
+                            case 'switchTab':
+                                setActiveTab(message.tab);
+                                break;
+                        }
+                    });
                 })();
             </script>
         </body>
         </html>`;
+    }
+
+    /**
+     * Show the TDD Dashboard tab
+     */
+    showTddDashboard() {
+        // If the panel isn't created yet, create it
+        if (!this._panel) {
+            return;
+        }
+
+        try {
+            // Update the panel content to ensure it's current
+            this._update();
+            
+            // Send a message to the webview to switch to the TDD Dashboard tab
+            this._panel.webview.postMessage({
+                command: 'switchTab',
+                tab: 'tdd-dashboard'
+            });
+            
+            // Update the panel title
+            this._panel.title = "TDD Dashboard";
+        } catch (error) {
+            Logger.error(`Error showing TDD dashboard: ${error.message}`, 'tdd');
+            vscode.window.showErrorMessage(`Failed to show TDD dashboard: ${error.message}`);
+        }
     }
 }
 
