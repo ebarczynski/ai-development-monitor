@@ -2,7 +2,7 @@
   "name": "ai-development-monitor",
   "displayName": "AI Development Monitor",
   "description": "Monitor and evaluate GitHub Copilot suggestions",
-  "version": "0.4.3",
+  "version": "0.4.5",
   "publisher": "local-publisher",
   "license": "MIT",
   "repository": {
@@ -50,12 +50,20 @@
         "title": "AI Monitor: Extract Context from Copilot Chat"
       },
       {
+        "command": "ai-development-monitor.retryConnection",
+        "title": "AI Monitor: Retry MCP Connection"
+      },
+      {
         "command": "ai-development-monitor.viewExtractedContext",
         "title": "AI Monitor: View Extracted Chat Context"
       },
       {
         "command": "ai-development-monitor.showPanel",
         "title": "AI Dev: Show Monitor Panel"
+      },
+      {
+        "command": "ai-development-monitor.showTddDashboard",
+        "title": "AI Dev: Show TDD Dashboard"
       }
     ],
     "configuration": {
@@ -99,7 +107,7 @@
         "aiDevelopmentMonitor.useMcp": {
           "type": "boolean",
           "default": true,
-          "description": "Use Model Context Protocol (MCP) for communication with the AI Development Monitor"
+          "description": "Use MCP server for evaluations instead of HTTP API"
         },
         "aiDevelopmentMonitor.autoEvaluate": {
           "type": "boolean",
@@ -115,6 +123,29 @@
           "type": "number",
           "default": 10000,
           "description": "Interval in milliseconds before retrying with 'Continue'"
+        },
+        "aiDevelopmentMonitor.tdd.autoRunTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically run tests when code changes"
+        },
+        "aiDevelopmentMonitor.tdd.showInlineCoverage": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline coverage highlighting in editor"
+        },
+        "aiDevelopmentMonitor.tdd.defaultIterations": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Default number of TDD iterations to run"
+        },
+        "aiDevelopmentMonitor.tdd.testFramework": {
+          "type": "string",
+          "enum": ["auto", "pytest", "jest", "junit", "googletest"],
+          "default": "auto",
+          "description": "Test framework to use for TDD tests"
         }
       }
     }

@@ -2,6 +2,22 @@
 
 All notable changes to the "AI Development Monitor" extension will be documented in this file.
 
+## [0.4.5] - 2025-05-11
+
+- Implement chat history management with import/export functionality
+- Add UI components for chat history operations in the panel
+- Enhance optimized MCP client with chat history protocol support
+- Implement timestamp preservation for imported chat sessions
+- Add error handling for chat history import/export operations
+
+## [0.4.4] - 2025-05-10
+
+- Add missing `retryConnection` command to fix connection indicator functionality
+- Remove REST API fallback mechanism, making MCP connection mandatory
+- Fix heartbeat functionality in optimized MCP client
+- Improve error messages for connection issues
+- Add documentation for MCP-only connection approach
+
 ## [0.4.3] - 2025-04-25
 
 - Add missing `evaluateSuggestion` method to OptimizedMCPClient for proper suggestion evaluation

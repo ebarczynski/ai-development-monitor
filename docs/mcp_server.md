@@ -11,6 +11,7 @@ The MCP Server enables structured, bidirectional communication between GitHub Co
 - **Structured Message Format**: Type-safe message exchange using Pydantic models
 - **Context-Aware Messaging**: Maintains conversation context and threading
 - **Multiple Message Types**: Support for suggestions, evaluations, and continuations
+- **Chat History Management**: Import and export chat sessions with timestamp preservation (see [Chat History Documentation](./chat_history.md))
 
 ## Architecture
 
@@ -22,6 +23,24 @@ The MCP Server enables structured, bidirectional communication between GitHub Co
 │                 │        │               │        │                  │
 └─────────────────┘        └───────────────┘        └──────────────────┘
 ```
+
+## Chat History Management
+
+The MCP Server now supports comprehensive chat history management with import/export capabilities:
+
+### Features
+
+- **Export Chat History**: Save complete chat sessions with timestamps to JSON files
+- **Import Chat History**: Load previously exported chat sessions with timestamp preservation
+- **Session Management**: Track and organize multiple chat sessions
+- **Error Handling**: Robust validation of imported chat history files
+
+### API Endpoints
+
+- `POST /api/chat/export` - Export current chat history to a file
+- `POST /api/chat/import` - Import chat history from a file
+- `GET /api/chat/sessions` - List all available chat sessions
+- `DELETE /api/chat/sessions/{session_id}` - Delete a specific chat session
 
 ## Message Types
 

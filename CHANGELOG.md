@@ -2,6 +2,15 @@
 
 All notable changes to the Python components of the AI Development Monitor will be documented in this file.
 
+## [0.4.4] - 2025-05-11
+
+### Added
+- Chat history management with import/export functionality
+- New API endpoints for chat history operations
+- Timestamp preservation for imported chat sessions
+- Enhanced error handling for chat history operations
+- Comprehensive tests for chat history functionality
+
 ## [0.4.3] - 2025-04-25
 
 ### Added
