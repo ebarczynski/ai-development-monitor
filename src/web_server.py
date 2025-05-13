@@ -33,7 +33,7 @@ from src.web_interface import (
 app = FastAPI(
     title="MCP Server - Real-time Logs",
     description="Web interface for monitoring MCP communication in real-time",
-    version="1.0.0"
+    version="0.5.0"
 )
 
 # Add CORS middleware to allow requests from any origin

@@ -29,10 +29,32 @@ let notificationHandler;
  * @param {vscode.ExtensionContext} context
  */
 async function activate(context) {
-    // Initialize logger with extension context
+    // Get configuration settings
+    const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
+    const loggingConfig = vscode.workspace.getConfiguration('aiDevelopmentMonitor.logging');
+    const debugVerbosity = loggingConfig.get('debugVerbosity', 'normal');
+    
+    // Determine appropriate log level based on verbosity setting
+    let logLevel = Logger.LOG_LEVEL.INFO;
+    switch (debugVerbosity) {
+        case 'minimal':
+            logLevel = Logger.LOG_LEVEL.INFO;
+            break;
+        case 'normal':
+            logLevel = Logger.LOG_LEVEL.DEBUG;
+            break;
+        case 'verbose':
+            logLevel = Logger.LOG_LEVEL.TRACE;
+            break;
+    }
+    
+    // Initialize logger with extension context and configuration
     Logger.initialize(vscode, context, {
-        level: Logger.LOG_LEVEL.DEBUG,
-        logToOutputChannel: true
+        level: logLevel,
+        logToOutputChannel: true,
+        debugVerbosity: debugVerbosity,
+        rateLimitDuration: loggingConfig.get('rateLimitDuration', 2000),
+        maxDuplicateLogs: loggingConfig.get('maxDuplicateLogs', 3)
     });
     
     Logger.info('AI Development Monitor is now active', 'system');
@@ -54,6 +76,80 @@ async function activate(context) {
     statusBarItem.command = 'ai-development-monitor.enable';
     statusBarItem.show();
     
+    // Create a context menu for the status bar item
+    statusBarItem.command = undefined; // Remove direct command to use the menu instead
+    
+    // Show context menu when clicking the status bar item
+    statusBarItem.tooltip = "AI Development Monitor";
+    statusBarItem.command = 'ai-development-monitor.showStatusMenu';
+    
+    // Register command for showing the status menu
+    const showStatusMenuCommand = vscode.commands.registerCommand('ai-development-monitor.showStatusMenu', () => {
+        const items = [];
+        
+        if (mcpClient) {
+            const status = mcpClient.getConnectionStatus ? mcpClient.getConnectionStatus() : { state: connectionStatus ? 'connected' : 'disconnected' };
+            
+            // Quick connection management actions
+            if (status.state === 'connected') {
+                items.push({
+                    label: "$(shield-check) Monitor is Connected",
+                    description: monitorEnabled ? "Active" : "Disabled",
+                    detail: "Connection to MCP server is established"
+                });
+                
+                items.push({
+                    label: monitorEnabled ? "$(circle-slash) Disable Monitor" : "$(play-circle) Enable Monitor",
+                    command: monitorEnabled ? 'ai-development-monitor.disable' : 'ai-development-monitor.enable'
+                });
+            } else {
+                items.push({
+                    label: "$(shield-x) Monitor is Disconnected",
+                    description: "Not connected to MCP server"
+                });
+                
+                items.push({
+                    label: "$(debug-restart) Reconnect to MCP Server",
+                    command: 'ai-development-monitor.retryConnection'
+                });
+            }
+            
+            // Additional actions
+            items.push({
+                label: "$(info) Show Connection Details",
+                command: 'ai-development-monitor.showConnectionStatus'
+            });
+            
+            items.push({
+                label: "$(terminal) Show Logs",
+                command: 'ai-development-monitor.showLogs'
+            });
+            
+            if (monitorEnabled) {
+                items.push({
+                    label: "$(dashboard) Open Dashboard",
+                    command: 'ai-development-monitor.showPanel'
+                });
+            }
+        } else {
+            items.push({
+                label: "$(warning) MCP Client Not Initialized",
+                detail: "Check the extension settings"
+            });
+        }
+        
+        // Show the quick pick menu
+        vscode.window.showQuickPick(items, {
+            placeHolder: "AI Development Monitor",
+            matchOnDescription: true,
+            matchOnDetail: true
+        }).then(item => {
+            if (item && item.command) {
+                vscode.commands.executeCommand(item.command);
+            }
+        });
+    });
+
     // Register commands
     const enableCommand = vscode.commands.registerCommand('ai-development-monitor.enable', enableMonitor);
     const disableCommand = vscode.commands.registerCommand('ai-development-monitor.disable', disableMonitor);
@@ -79,12 +175,18 @@ async function activate(context) {
     const runTestCommand = vscode.commands.registerCommand('ai-development-monitor.runDiagnosticTest', diagnosticTest.runDiagnosticTests);
     
     // Register command to retry MCP connection
-    const retryConnectionCommand = vscode.commands.registerCommand('ai-development-monitor.retryConnection', () => {
+    const retryConnectionCommand = vscode.commands.registerCommand('ai-development-monitor.retryConnection', async () => {
         if (mcpClient) {
-            vscode.window.showInformationMessage('Attempting to reconnect to MCP server...');
-            mcpClient.connect().catch(err => {
+            try {
+                // Use the new reconnect method which handles the existing connection cleanup
+                await mcpClient.reconnect();
+                connectionStatus = mcpClient.connected;
+                updateStatusBar();
+            } catch (err) {
                 vscode.window.showErrorMessage(`Failed to connect to MCP server: ${err.message}`);
-            });
+            }
+        } else {
+            vscode.window.showErrorMessage('MCP client is not initialized. Please check your settings.');
         }
     });
     
@@ -92,10 +194,60 @@ async function activate(context) {
     const showLogsCommand = vscode.commands.registerCommand('ai-development-monitor.showLogs', () => {
         Logger.show();
     });
+
+    // Register command to show connection status details
+    const showConnectionStatusCommand = vscode.commands.registerCommand('ai-development-monitor.showConnectionStatus', () => {
+        if (mcpClient && typeof mcpClient.getConnectionStatus === 'function') {
+            const status = mcpClient.getConnectionStatus();
+            
+            // Format the status information
+            const statusMessage = [
+                `Connection State: ${status.state}`,
+                `Connected: ${status.connected}`,
+                `Socket State: ${getSocketStateDescription(status.socketState)}`,
+                `Reconnection Attempts: ${status.reconnectAttempts}`,
+                `Queued Messages: ${status.queuedMessages}`,
+                `Last Heartbeat Pong: ${status.lastPongTime ? formatTimeDifference(status.lastPongTime) : 'Never'}`
+            ].join('\n');
+            
+            // Show the status information
+            vscode.window.showInformationMessage('Connection Status', { modal: true, detail: statusMessage });
+        } else {
+            vscode.window.showInformationMessage('Connection status information is not available');
+        }
+    });
+    
+    // Helper function to describe WebSocket state
+    function getSocketStateDescription(state) {
+        if (state === 'no-socket') return 'No WebSocket';
+        switch (state) {
+            case WebSocket.CONNECTING: return 'CONNECTING (0)';
+            case WebSocket.OPEN: return 'OPEN (1)';
+            case WebSocket.CLOSING: return 'CLOSING (2)';
+            case WebSocket.CLOSED: return 'CLOSED (3)';
+            default: return `Unknown (${state})`;
+        }
+    }
+    
+    // Helper function to format time difference
+    function formatTimeDifference(timeString) {
+        try {
+            const time = new Date(timeString);
+            const now = new Date();
+            const diffMs = now - time;
+            
+            if (diffMs < 1000) return 'Just now';
+            if (diffMs < 60000) return `${Math.floor(diffMs / 1000)} seconds ago`;
+            if (diffMs < 3600000) return `${Math.floor(diffMs / 60000)} minutes ago`;
+            return `${Math.floor(diffMs / 3600000)} hours ago`;
+        } catch (e) {
+            return timeString || 'Unknown';
+        }
+    }
     
     // Get configuration
-    const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
-    monitorEnabled = config.get('enabled', true);
+    const extensionConfig = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
+    monitorEnabled = extensionConfig.get('enabled', true);
     
     // Add the panel command to subscriptions
     context.subscriptions.push(
@@ -109,11 +261,13 @@ async function activate(context) {
         showTddDashboardCommand,
         statusBarItem,
         runTestCommand,
-        retryConnectionCommand
+        retryConnectionCommand,
+        showConnectionStatusCommand,
+        showStatusMenuCommand
     );
     
     // Initialize MCP client if enabled
-    if (config.get('useMcp', true)) {
+    if (extensionConfig.get('useMcp', true)) {
         Logger.info('Initializing Optimized MCP client', 'mcp');
         // Use the new optimized MCP client instead of the original one
         mcpClient = new OptimizedMCPClient();
@@ -121,6 +275,12 @@ async function activate(context) {
             await mcpClient.connect();
             connectionStatus = true;
             Logger.info('Successfully connected to MCP server with optimized client', 'mcp');
+            
+            // Start automatic reconnection monitoring
+            if (extensionConfig.get('autoReconnect', true)) {
+                Logger.info('Setting up automatic MCP reconnection monitor', 'mcp');
+                // The client will now handle its own connection monitoring
+            }
             
             // Add a statistics command to show optimization metrics
             const showStatsCommand = vscode.commands.registerCommand('ai-development-monitor.showConnectionStats', () => {
@@ -171,9 +331,27 @@ async function activate(context) {
             copilotChatIntegration.showExtractedContext();
         });
         
+        // Register commands for interacting with Copilot Chat
+        const continueCommand = vscode.commands.registerCommand('ai-development-monitor.copilotChatContinue', () => {
+            copilotChatIntegration.sendContinue(true);
+        });
+        
+        const requestChangesCommand = vscode.commands.registerCommand('ai-development-monitor.copilotChatRequestChanges', async () => {
+            // Prompt the user for specific feedback
+            const feedback = await vscode.window.showInputBox({
+                placeHolder: "Enter specific feedback (optional)",
+                prompt: "What changes would you like to request?"
+            });
+            
+            // Send the request changes message
+            copilotChatIntegration.requestChanges(feedback || "", true);
+        });
+        
         context.subscriptions.push(
             extractChatCommand,
-            viewExtractedContextCommand
+            viewExtractedContextCommand,
+            continueCommand,
+            requestChangesCommand
         );
         
         // Set up callback to extract context when it changes
@@ -492,20 +670,57 @@ function updateStatusBar() {
         return;
     }
     
-    if (connectionStatus) {
-        if (monitorEnabled) {
-            statusBarItem.text = "$(shield-check) AI Monitor: Active";
-            statusBarItem.tooltip = "AI Development Monitor is active and connected";
-            statusBarItem.command = 'ai-development-monitor.disable';
+    // If we have an MCP client, use its detailed status
+    if (mcpClient && typeof mcpClient.getConnectionStatus === 'function') {
+        const status = mcpClient.getConnectionStatus();
+        
+        if (status.state === 'connected') {
+            if (monitorEnabled) {
+                statusBarItem.text = "$(shield-check) AI Monitor: Active";
+                
+                // Show queued messages if any
+                const queueInfo = status.queuedMessages > 0 
+                    ? ` (${status.queuedMessages} queued messages)` 
+                    : '';
+                    
+                statusBarItem.tooltip = `AI Development Monitor is active and connected${queueInfo}`;
+                statusBarItem.command = 'ai-development-monitor.disable';
+            } else {
+                statusBarItem.text = "$(shield) AI Monitor: Disabled";
+                statusBarItem.tooltip = "AI Development Monitor is disabled (but connected)";
+                statusBarItem.command = 'ai-development-monitor.enable';
+            }
+        } else if (status.state === 'reconnecting') {
+            statusBarItem.text = "$(sync~spin) AI Monitor: Reconnecting...";
+            statusBarItem.tooltip = `AI Development Monitor is reconnecting (attempt ${status.reconnectAttempts})`;
+            statusBarItem.command = 'ai-development-monitor.retryConnection';
+        } else if (status.state === 'connecting') {
+            statusBarItem.text = "$(sync~spin) AI Monitor: Connecting...";
+            statusBarItem.tooltip = "AI Development Monitor is establishing connection";
+            statusBarItem.command = 'ai-development-monitor.showLogs';
         } else {
-            statusBarItem.text = "$(shield) AI Monitor: Disabled";
-            statusBarItem.tooltip = "AI Development Monitor is disabled";
-            statusBarItem.command = 'ai-development-monitor.enable';
+            // Disconnected state
+            statusBarItem.text = "$(shield-x) AI Monitor: Disconnected";
+            statusBarItem.tooltip = "AI Development Monitor is disconnected. Click to reconnect.";
+            statusBarItem.command = 'ai-development-monitor.retryConnection';
         }
     } else {
-        statusBarItem.text = "$(shield-x) AI Monitor: Disconnected";
-        statusBarItem.tooltip = "AI Development Monitor is disconnected";
-        statusBarItem.command = 'ai-development-monitor.enable';
+        // Fall back to the simple connection status
+        if (connectionStatus) {
+            if (monitorEnabled) {
+                statusBarItem.text = "$(shield-check) AI Monitor: Active";
+                statusBarItem.tooltip = "AI Development Monitor is active and connected";
+                statusBarItem.command = 'ai-development-monitor.disable';
+            } else {
+                statusBarItem.text = "$(shield) AI Monitor: Disabled";
+                statusBarItem.tooltip = "AI Development Monitor is disabled";
+                statusBarItem.command = 'ai-development-monitor.enable';
+            }
+        } else {
+            statusBarItem.text = "$(shield-x) AI Monitor: Disconnected";
+            statusBarItem.tooltip = "AI Development Monitor is disconnected. Click to reconnect.";
+            statusBarItem.command = 'ai-development-monitor.retryConnection';
+        }
     }
 }
 
@@ -633,13 +848,19 @@ async function evaluateCopilotSuggestion() {
         
         // Check connection
         if (!connectionStatus) {
-            const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
-            if (config.get('useMcp', true) && mcpClient) {
+            const reconnectConfig = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
+            if (reconnectConfig.get('useMcp', true) && mcpClient) {
                 Logger.info('Attempting to reconnect to MCP server', 'mcp');
                 try {
-                    await mcpClient.connect();
-                    connectionStatus = true;
-                    Logger.info('Successfully reconnected to MCP server', 'mcp');
+                    // Use the improved reconnect method
+                    const reconnected = await mcpClient.reconnect();
+                    connectionStatus = reconnected;
+                    
+                    if (reconnected) {
+                        Logger.info('Successfully reconnected to MCP server', 'mcp');
+                    } else {
+                        Logger.warn('Reconnection attempt did not succeed', 'mcp');
+                    }
                 } catch (error) {
                     Logger.error('Failed to reconnect to MCP server', error, 'mcp');
                     if (!await checkApiConnection()) {
@@ -717,8 +938,8 @@ async function evaluateCopilotSuggestion() {
             let response;
             
             // Use MCP if available and connected
-            const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
-            if (config.get('useMcp', true) && mcpClient && mcpClient.connected) {
+            const mcpConfig = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
+            if (mcpConfig.get('useMcp', true) && mcpClient && mcpClient.connected) {
                 Logger.info('Sending evaluation request via MCP', 'mcp');
                 
                 // Send evaluation request via MCP
@@ -778,6 +999,14 @@ async function evaluateCopilotSuggestion() {
             Logger.debug(`- Hallucination risk: ${lastEvaluation.evaluation.analysis.hallucination_risk}`, 'evaluation');
             Logger.debug(`- Recursive risk: ${lastEvaluation.evaluation.analysis.recursive_risk}`, 'evaluation');
             Logger.debug(`- Alignment score: ${lastEvaluation.evaluation.analysis.alignment_score}`, 'evaluation');
+            
+            // Update the AI Monitor Panel with the evaluation results
+            if (AIMonitorPanel.currentPanel) {
+                AIMonitorPanel.currentPanel.updateEvaluationResult(lastEvaluation);
+                Logger.info('Updated AIMonitorPanel with evaluation results', 'evaluation');
+            } else {
+                Logger.debug('AIMonitorPanel not available for result update', 'evaluation');
+            }
             
             if (lastEvaluation.accept) {
                 vscode.window.showInformationMessage('Suggestion ACCEPTED ✅', 'Details', 'Apply')
@@ -1014,25 +1243,105 @@ async function sendContinueCommand() {
 
 // This method is called when your extension is deactivated
 function deactivate() {
-    // Clean up resources
+    Logger.info('Deactivating AI Development Monitor extension...', 'extension');
+    
+    // Clean up MCP client resources
     if (mcpClient) {
-        // If we're using the optimized client, it has a proper disposal method
-        if (typeof mcpClient.dispose === 'function') {
-            mcpClient.dispose();
+        try {
+            // First try to use our new disconnect method for a clean shutdown
+            if (typeof mcpClient.disconnect === 'function') {
+                Logger.info('Performing clean disconnect from MCP server', 'mcp');
+                mcpClient.disconnect(true); // Pass true to suppress events during shutdown
+            }
+            // Then handle network change handlers cleanup
+            if (typeof mcpClient.cleanupNetworkChangeHandlers === 'function') {
+                Logger.info('Cleaning up network change handlers', 'mcp');
+                mcpClient.cleanupNetworkChangeHandlers();
+            }
+            // Then fall back to the dispose method if available
+            else if (typeof mcpClient.dispose === 'function') {
+                Logger.info('Disposing MCP client resources', 'mcp');
+                mcpClient.dispose();
+            }
+            // For basic connection cleanup, ensure socket is terminated
+            else if (mcpClient.socket) {
+                Logger.info('Terminating WebSocket connection', 'mcp');
+                try {
+                    mcpClient.socket.close(1000, 'Extension deactivating');
+                } catch (e) {
+                    // Ignore errors during close
+                }
+            }
+            
+            // Clear any intervals that might still be running
+            if (mcpClient.persistentReconnectInterval) {
+                clearInterval(mcpClient.persistentReconnectInterval);
+                mcpClient.persistentReconnectInterval = null;
+            }
+            
+            if (mcpClient.connectionMonitorInterval) {
+                clearInterval(mcpClient.connectionMonitorInterval);
+                mcpClient.connectionMonitorInterval = null;
+            }
+            
+            if (mcpClient.heartbeatInterval) {
+                clearInterval(mcpClient.heartbeatInterval);
+                mcpClient.heartbeatInterval = null;
+            }
+        } catch (error) {
+            Logger.error('Error during MCP client cleanup', error, 'mcp');
         }
         mcpClient = null;
+    }
+    
+    // Clean up any other clients
+    if (copilotIntegration) {
+        try {
+            Logger.info('Cleaning up Copilot integration resources', 'copilot');
+            if (typeof copilotIntegration.dispose === 'function') {
+                copilotIntegration.dispose();
+            }
+        } catch (error) {
+            Logger.error('Error cleaning up Copilot integration', error, 'copilot');
+        }
+        copilotIntegration = null;
+    }
+    
+    if (copilotChatIntegration) {
+        try {
+            Logger.info('Cleaning up Copilot Chat integration resources', 'copilot');
+            if (typeof copilotChatIntegration.dispose === 'function') {
+                copilotChatIntegration.dispose();
+            }
+        } catch (error) {
+            Logger.error('Error cleaning up Copilot Chat integration', error, 'copilot');
+        }
+        copilotChatIntegration = null;
     }
     
     // Clear any timeouts
     if (retryTimeout) {
         clearTimeout(retryTimeout);
+        retryTimeout = null;
     }
     
     // Update status bar
     if (statusBarItem) {
         statusBarItem.dispose();
+        statusBarItem = null;
     }
     
+    // Final cleanup for other resources
+    if (notificationHandler) {
+        try {
+            notificationHandler.dispose();
+        } catch (e) {
+            // Ignore errors
+        }
+        notificationHandler = null;
+    }
+    
+    Logger.info('AI Development Monitor has been successfully deactivated', 'extension');
     console.log('AI Development Monitor is now deactivated');
 }
 

@@ -74,10 +74,21 @@ classDiagram
         -chatProcessor
         -lastChatHistory
         -currentFile: string
-        +initialize(context, mcpClient, contextManager)
+        -isAvailable: boolean
+        -copilotChatExtension
+        -chatHistoryCache: array
+        -chatChangeCallbacks: array
+        +initialize(): Promise<boolean>
         +processChatMessage(message): Promise
         +extractCodeFromChat(message): string
         +updateContext(file, code, explanation)
+        +setupChatViewListeners()
+        +registerChatCommands()
+        +sendMessageToChat(message, showNotification): Promise<boolean>
+        +sendContinue(showNotification): Promise<boolean>
+        +requestChanges(feedback, showNotification): Promise<boolean>
+        +extractChatContext(showNotification)
+        +onContextChange(callback)
     }
     
     class ContextManager {

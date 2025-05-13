@@ -120,6 +120,9 @@ class AIMonitorPanel {
                     case 'updateTDDConfig':
                         this.updateTDDConfiguration(message.setting, message.value);
                         break;
+                    case 'updateSetting':
+                        this.updateGlobalSetting(message.setting, message.value);
+                        break;
                     case 'openFile':
                         this.openFileWithCoverage(message.filePath);
                         break;
@@ -211,6 +214,29 @@ class AIMonitorPanel {
                 this.addLogEntry(`TDD Iteration ${result.iteration}: Generated ${result.test_code.length} bytes of test code`, 'info');
             }
         }
+        
+        this._update();
+    }
+    
+    /**
+     * Update the panel with evaluation results from command-triggered evaluations
+     * @param {Object} evaluationResult The evaluation result from an AI Dev action
+     */
+    updateEvaluationResult(evaluationResult) {
+        if (!evaluationResult) return;
+        
+        this._lastEvaluation = evaluationResult;
+        
+        // Add a log entry for the manually triggered evaluation
+        const accept = evaluationResult.accept;
+        const reason = evaluationResult.evaluation?.reason || 'No reason provided';
+        const message = `Command-triggered evaluation: ${accept ? 'ACCEPTED' : 'REJECTED'} - ${reason}`;
+        const type = accept ? 'success' : 'warning';
+        
+        this.addLogEntry(message, type);
+        
+        // Make sure the panel becomes visible for command-triggered evaluations
+        this._panel.reveal(vscode.ViewColumn.Two);
         
         this._update();
     }
@@ -316,6 +342,44 @@ class AIMonitorPanel {
         
         // Update the panel
         this._update();
+    }
+    
+    /**
+     * Update a global extension setting
+     * @param {string} setting The setting name (full path)
+     * @param {any} value The new value
+     */
+    updateGlobalSetting(setting, value) {
+        try {
+            // Parse the setting path (e.g., "aiDevelopmentMonitor.autoCaptureChatHistory")
+            const parts = setting.split('.');
+            if (parts.length < 2) {
+                Logger.warn(`Invalid setting path: ${setting}`, 'settings');
+                return;
+            }
+            
+            // Get the configuration section
+            const section = parts[0];
+            const key = parts.slice(1).join('.');
+            
+            // Update the setting
+            const config = vscode.workspace.getConfiguration(section);
+            config.update(key, value, vscode.ConfigurationTarget.Global);
+            
+            // Log the change
+            this.addLogEntry(`Updated setting: ${setting} = ${value}`, 'info');
+            
+            // Show notification for important settings
+            const importantSettings = ['autoCaptureChatHistory', 'autoEvaluate', 'notificationLevel'];
+            const shortKey = key.split('.').pop();
+            
+            if (importantSettings.includes(shortKey)) {
+                vscode.window.showInformationMessage(`AI Development Monitor: ${shortKey} set to ${value}`);
+            }
+        } catch (error) {
+            Logger.error(`Error updating setting ${setting}: ${error.message}`, 'settings');
+            vscode.window.showErrorMessage(`Failed to update setting: ${error.message}`);
+        }
     }
     
     /**
@@ -588,6 +652,44 @@ class AIMonitorPanel {
                                     <span class="tdd-coverage-filename" data-path="${file.path}">${file.name || file.path.split('/').pop()}</span>
                                 </td>
                                 <td class="tdd-coverage-percent">${Math.round(file.coverage * 100)}%</td>
+                            </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                ` : ''}
+                
+                ${this._tddResults.length > 0 ? `
+                <div class="tdd-test-files-section">
+                    <h4>Generated Test Files</h4>
+                    <table class="tdd-files-table">
+                        <thead>
+                            <tr>
+                                <th>Iteration</th>
+                                <th>Test File</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${this._tddResults.map((result, index) => `
+                            <tr>
+                                <td>#${result.iteration || index + 1}</td>
+                                <td>
+                                    ${result.testFilePath ? 
+                                      `<span class="tdd-file-link" data-path="${result.testFilePath}" data-index="${index}">${result.testFilePath.split('/').pop()}</span>` : 
+                                      'No file created'}
+                                </td>
+                                <td>
+                                    ${result.tests && result.tests.total ? 
+                                      `<span class="${result.tests.passed === result.tests.total ? 'success' : 'warning'}">
+                                        ${result.tests.passed}/${result.tests.total} passed
+                                      </span>` : 
+                                      'Not executed'}
+                                </td>
+                                <td>
+                                    <button class="view-test-btn small-btn" data-index="${index}">View</button>
+                                </td>
                             </tr>
                             `).join('')}
                         </tbody>
@@ -1018,15 +1120,48 @@ class AIMonitorPanel {
                     color: var(--vscode-descriptionForeground);
                 }
                 
-                .tdd-config-section, .tdd-progress-section, .tdd-coverage-section {
+                .tdd-config-section, .tdd-progress-section, .tdd-coverage-section, .settings-section {
                     border: 1px solid var(--vscode-panel-border);
                     border-radius: 4px;
                     padding: 16px;
                 }
                 
-                .tdd-config-section h4, .tdd-progress-section h4, .tdd-coverage-section h4 {
+                .tdd-config-section h4, .tdd-progress-section h4, .tdd-coverage-section h4, .settings-section h4 {
                     margin-top: 0;
                     margin-bottom: 12px;
+                }
+                
+                .settings-grid {
+                    display: grid;
+                    grid-template-columns: 1fr;
+                    gap: 16px;
+                }
+                
+                .settings-item {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 4px;
+                }
+                
+                .settings-description {
+                    font-size: 0.9em;
+                    color: var(--vscode-descriptionForeground);
+                    margin-top: 4px;
+                    margin-left: 20px;
+                }
+                
+                .settings-toggle {
+                    margin-right: 8px;
+                }
+                
+                .settings-select {
+                    height: 28px;
+                    background-color: var(--vscode-input-background);
+                    color: var(--vscode-input-foreground);
+                    border: 1px solid var(--vscode-input-border);
+                    border-radius: 2px;
+                    padding: 0 8px;
+                    margin-top: 4px;
                 }
                 
                 .tdd-config-grid {
@@ -1131,6 +1266,7 @@ class AIMonitorPanel {
                         <button class="tab-button active" data-tab="overview">Overview</button>
                         <button class="tab-button" data-tab="tdd-dashboard">TDD Dashboard</button>
                         <button class="tab-button" data-tab="logs">Logs</button>
+                        <button class="tab-button" data-tab="settings">Settings</button>
                     </div>
                     
                     <div class="tab-content active" id="overview">
@@ -1157,6 +1293,56 @@ class AIMonitorPanel {
                             <h3>Activity Log</h3>
                             <div class="logs-container">
                                 ${logsHtml || '<div class="log-entry info"><span class="log-message">No activity recorded yet.</span></div>'}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="tab-content" id="settings">
+                        <div class="panel settings-panel">
+                            <h3>AI Monitor Settings</h3>
+                            <div class="settings-container">
+                                <div class="settings-section">
+                                    <h4>Copilot Integration</h4>
+                                    <div class="settings-grid">
+                                        <div class="settings-item">
+                                            <label>
+                                                <input type="checkbox" class="settings-toggle" data-setting="autoCaptureChatHistory" 
+                                                ${vscode.workspace.getConfiguration('aiDevelopmentMonitor').get('autoCaptureChatHistory', true) ? 'checked' : ''}>
+                                                Auto-capture Copilot Chat history
+                                            </label>
+                                            <div class="settings-description">
+                                                Automatically capture and process GitHub Copilot Chat conversations
+                                            </div>
+                                        </div>
+                                        <div class="settings-item">
+                                            <label>
+                                                <input type="checkbox" class="settings-toggle" data-setting="autoEvaluate"
+                                                ${vscode.workspace.getConfiguration('aiDevelopmentMonitor').get('autoEvaluate', true) ? 'checked' : ''}>
+                                                Auto-evaluate Copilot suggestions
+                                            </label>
+                                            <div class="settings-description">
+                                                Automatically evaluate code suggestions from GitHub Copilot
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="settings-section">
+                                    <h4>Notification Settings</h4>
+                                    <div class="settings-grid">
+                                        <div class="settings-item">
+                                            <label>Notification level:</label>
+                                            <select class="settings-select" data-setting="notificationLevel">
+                                                <option value="minimal" ${vscode.workspace.getConfiguration('aiDevelopmentMonitor').get('notificationLevel', 'normal') === 'minimal' ? 'selected' : ''}>Minimal</option>
+                                                <option value="normal" ${vscode.workspace.getConfiguration('aiDevelopmentMonitor').get('notificationLevel', 'normal') === 'normal' ? 'selected' : ''}>Normal</option>
+                                                <option value="detailed" ${vscode.workspace.getConfiguration('aiDevelopmentMonitor').get('notificationLevel', 'normal') === 'detailed' ? 'selected' : ''}>Detailed</option>
+                                            </select>
+                                            <div class="settings-description">
+                                                Control how verbose notifications are displayed
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1222,6 +1408,70 @@ class AIMonitorPanel {
                                     vscode.postMessage({ 
                                         command: 'updateTDDConfig', 
                                         setting: setting,
+                                        value: value 
+                                    });
+                                });
+                            });
+                        }
+                        
+                        // Setup general settings buttons
+                        var settingsToggles = document.querySelectorAll('.settings-toggle');
+                        if (settingsToggles) {
+                            settingsToggles.forEach(function(toggle) {
+                                toggle.addEventListener('click', function() {
+                                    var setting = toggle.getAttribute('data-setting');
+                                    var value = toggle.checked;
+                                    vscode.postMessage({ 
+                                        command: 'updateSetting', 
+                                        setting: 'aiDevelopmentMonitor.' + setting,
+                                        value: value 
+                                    });
+                                });
+                            });
+                        }
+                        
+                        // Setup settings dropdowns
+                        var settingsSelects = document.querySelectorAll('.settings-select');
+                        if (settingsSelects) {
+                            settingsSelects.forEach(function(select) {
+                                select.addEventListener('change', function() {
+                                    var setting = select.getAttribute('data-setting');
+                                    var value = select.value;
+                                    vscode.postMessage({ 
+                                        command: 'updateSetting', 
+                                        setting: 'aiDevelopmentMonitor.' + setting,
+                                        value: value 
+                                    });
+                                });
+                            });
+                        }
+                        
+                        // Setup general settings buttons
+                        var settingsToggles = document.querySelectorAll('.settings-toggle');
+                        if (settingsToggles) {
+                            settingsToggles.forEach(function(toggle) {
+                                toggle.addEventListener('click', function() {
+                                    var setting = toggle.getAttribute('data-setting');
+                                    var value = toggle.checked;
+                                    vscode.postMessage({ 
+                                        command: 'updateSetting', 
+                                        setting: 'aiDevelopmentMonitor.' + setting,
+                                        value: value 
+                                    });
+                                });
+                            });
+                        }
+                        
+                        // Setup settings dropdowns
+                        var settingsSelects = document.querySelectorAll('.settings-select');
+                        if (settingsSelects) {
+                            settingsSelects.forEach(function(select) {
+                                select.addEventListener('change', function() {
+                                    var setting = select.getAttribute('data-setting');
+                                    var value = select.value;
+                                    vscode.postMessage({ 
+                                        command: 'updateSetting', 
+                                        setting: 'aiDevelopmentMonitor.' + setting,
                                         value: value 
                                     });
                                 });

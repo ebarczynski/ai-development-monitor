@@ -1,0 +1,880 @@
+"""
+Test Quality Metrics
+
+This module defines and implements metrics for evaluating the quality of
+test code to provide a more comprehensive assessment beyond simple pass/fail.
+"""
+import re
+import logging
+import math
+import os
+from typing import Dict, List, Any, Optional, Set, Tuple
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+class TestQualityMetrics:
+    """
+    Evaluates the quality of test code using various metrics
+    """
+    
+    def __init__(self):
+        """Initialize test quality metrics"""
+        # Define patterns for different test types
+        self.test_type_patterns = {
+            "unit": [
+                r"test_\w+", r"def test_", r"function test", r"it\(\s*['\"]\w+",
+                r"@Test", r"TEST\("
+            ],
+            "parameterized": [
+                r"@parameterized", r"@pytest.mark.parametrize", r"test.each\(",
+                r"@ParameterizedTest", r"@CsvSource", r"@ValueSource"
+            ],
+            "assertion": [
+                r"assert", r"expect\(.*\).to", r"should\.", r"assertEquals", 
+                r"assertTrue", r"assertFalse", r"verify\("
+            ],
+            "edge_case": [
+                r"edge\s*case", r"boundary", r"empty", r"null", r"none", r"undefined",
+                r"exception", r"error", r"overflow", r"underflow", r"zero"
+            ],
+            "mocking": [
+                r"mock", r"stub", r"fake", r"spy", r"@Mock", r"createMock",
+                r"jest.fn", r"sinon", r"moq"
+            ],
+            # Added for enhanced test quality analysis
+            "integration": [
+                r"integration\s*test", r"end-to-end", r"e2e", r"system\s*test",
+                r"component\s*test", r"functional\s*test"
+            ],
+            "performance": [
+                r"performance\s*test", r"benchmark", r"timing", r"profil",
+                r"slow", r"fast", r"optimize", r"efficient", r"speed\s*test"
+            ],
+            "security": [
+                r"security\s*test", r"vulnerability", r"auth\s*test", r"injection",
+                r"xss", r"csrf", r"secure", r"encrypt"
+            ]
+        }
+        
+        # Added for enhanced test quality analysis
+        self.assertion_quality_patterns = {
+            "exact_match": [
+                r"assert(?:Equals|That)\s*\([^,]+,\s*['\"][\w\s]+['\"]",
+                r"expect\([^)]+\)\s*\.\s*to\s*\.\s*equal\(['\"][\w\s]+['\"]",
+                r"expect\([^)]+\)\s*\.\s*toBe\(['\"][\w\s]+['\"]"
+            ],
+            "type_check": [
+                r"assert(?:IsInstance|Type)\s*\(", r"isinstance\s*\([^,]+,\s*[^)]+\)",
+                r"typeof\s*[^=]+\s*===", r"expect\([^)]+\)\s*\.\s*toBeInstanceOf"
+            ],
+            "collection_check": [
+                r"assert(?:In|Contains|NotIn)", r"in\s+[^:]+:",
+                r"\.includes\(", r"\.contains\(", r"has(?:Item|Key|Value)"
+            ],
+            "exception_check": [
+                r"assert(?:Raises|Throws)", r"try\s*:", r"catch\s*\(",
+                r"expect\([^)]+\)\s*\.\s*to(?:Throw|Reject)"
+            ],
+            "custom_message": [
+                r"assert[^(]+\([^,]+,\s*[^,]+,\s*['\"][\w\s]+['\"]",
+                r"expect\([^)]+\)\s*\.\s*to[^(]+\([^,]+,\s*['\"][\w\s]+['\"]"
+            ]
+        }
+        
+    def evaluate_test_quality(self, test_code: str, task_description: str = None,
+                             source_code: str = None, language: str = None) -> Dict[str, Any]:
+        """
+        Evaluate the quality of test code using various metrics.
+        
+        Args:
+            test_code: The test code to evaluate
+            task_description: Optional task description for relevance assessment
+            source_code: Optional source code being tested
+            language: Optional programming language for language-specific analysis
+            
+        Returns:
+            Dictionary containing quality metrics including:
+            - completeness_score: How complete the tests appear to be
+            - variety_score: Variety of test types/approaches used
+            - edge_case_score: How well edge cases are covered
+            - assertion_density: Density of assertions per test case
+            - readability_score: How readable/maintainable the tests are
+            - relevance_score: How well tests align with the task description
+            - assertion_quality: Quality of the assertions used
+            - complexity_coverage: How well test covers code complexity
+            - overall_quality: Combined quality metric from 0.0 to 1.0
+            - strengths: List of identified test strengths
+            - weaknesses: List of identified test weaknesses
+        """
+        if not test_code or len(test_code.strip()) < 10:
+            logger.warning("Empty or minimal test code provided for quality evaluation")
+            return {
+                "completeness_score": 0.0,
+                "variety_score": 0.0,
+                "edge_case_score": 0.0,
+                "assertion_density": 0.0,
+                "readability_score": 0.0,
+                "relevance_score": 0.0,
+                "assertion_quality": 0.0,
+                "complexity_coverage": 0.0,
+                "overall_quality": 0.0,
+                "strengths": [],
+                "weaknesses": ["Tests appear to be empty or minimal"]
+            }
+        
+        # Calculate individual metrics
+        completeness = self._calculate_completeness(test_code, source_code)
+        variety = self._calculate_test_variety(test_code)
+        edge_case_coverage = self._calculate_edge_case_coverage(test_code, task_description)
+        assertion_density = self._calculate_assertion_density(test_code)
+        readability = self._calculate_readability(test_code)
+        
+        # New metrics
+        relevance = self._calculate_relevance(test_code, task_description)
+        assertion_quality = self._calculate_assertion_quality(test_code)
+        complexity_coverage = self._calculate_complexity_coverage(test_code, source_code)
+        
+        # Determine overall quality with enhanced weighting
+        all_metrics = [
+            completeness["score"], 
+            variety["score"], 
+            edge_case_coverage["score"],
+            assertion_density["normalized_score"],
+            readability["score"],
+            relevance["score"],
+            assertion_quality["score"],
+            complexity_coverage["score"]
+        ]
+        
+        overall_quality = self._calculate_overall_quality(all_metrics)
+        
+        # Identify strengths and weaknesses
+        strengths = []
+        weaknesses = []
+        
+        # Add specific strengths
+        if completeness["score"] > 0.7:
+            strengths.append("Good test coverage")
+        if variety["score"] > 0.7:
+            strengths.append("Good variety of test approaches")
+        if edge_case_coverage["score"] > 0.7:
+            strengths.append("Good edge case handling")
+        if assertion_density["normalized_score"] > 0.7:
+            strengths.append("Strong assertion density")
+        if readability["score"] > 0.7:
+            strengths.append("High test readability")
+        if relevance["score"] > 0.7:
+            strengths.append("Tests are highly relevant to requirements")
+        if assertion_quality["score"] > 0.7:
+            strengths.append("High quality assertions")
+        if complexity_coverage["score"] > 0.7:
+            strengths.append("Good coverage of complex code paths")
+            
+        # Add specific weaknesses
+        if completeness["score"] < 0.4:
+            weaknesses.append("Limited test coverage")
+        if variety["score"] < 0.4:
+            weaknesses.append("Limited variety of test approaches")
+        if edge_case_coverage["score"] < 0.4:
+            weaknesses.append("Insufficient edge case handling")
+        if assertion_density["normalized_score"] < 0.4:
+            weaknesses.append("Low assertion density")
+        if readability["score"] < 0.4:
+            weaknesses.append("Poor test readability")
+        if relevance["score"] < 0.4:
+            weaknesses.append("Tests have low relevance to requirements")
+        if assertion_quality["score"] < 0.4:
+            weaknesses.append("Low quality assertions")
+        if complexity_coverage["score"] < 0.4:
+            weaknesses.append("Insufficient coverage of complex code paths")
+            
+        # Combine metrics
+        return {
+            "completeness_score": completeness["score"],
+            "variety_score": variety["score"],
+            "edge_case_score": edge_case_coverage["score"],
+            "assertion_density": assertion_density["value"],
+            "normalized_assertion_density": assertion_density["normalized_score"],
+            "readability_score": readability["score"],
+            "relevance_score": relevance["score"],
+            "assertion_quality": assertion_quality["score"],
+            "complexity_coverage": complexity_coverage["score"],
+            "overall_quality": overall_quality,
+            "strengths": strengths,
+            "weaknesses": weaknesses,
+            "test_count": completeness["test_count"],
+            "assertion_count": assertion_density["assertion_count"],
+            "metrics": {
+                "completeness": completeness,
+                "variety": variety,
+                "edge_case_coverage": edge_case_coverage,
+                "assertion_density": assertion_density,
+                "readability": readability,
+                "relevance": relevance,
+                "assertion_quality": assertion_quality,
+                "complexity_coverage": complexity_coverage
+            }
+        }
+        
+    def _calculate_completeness(self, test_code: str, source_code: str = None) -> Dict[str, Any]:
+        """
+        Calculate how complete the tests appear to be.
+        
+        Args:
+            test_code: The test code
+            source_code: Optional source code being tested
+            
+        Returns:
+            Dictionary with completeness score and related metrics
+        """
+        # Count test functions/methods
+        test_count = 0
+        for pattern in self.test_type_patterns["unit"]:
+            test_count += len(re.findall(pattern, test_code))
+            
+        # If we have source code, try to estimate coverage
+        coverage_ratio = None
+        if source_code:
+            # Extract function/method names from source code
+            source_funcs = set()
+            # Common patterns for function definitions across languages
+            func_patterns = [
+                r"def\s+(\w+)\s*\(", 
+                r"function\s+(\w+)\s*\(",
+                r"(?:public|private|protected)\s+\w+\s+(\w+)\s*\(",
+                r"\w+\s+(\w+)\s*\([^)]*\)\s*\{"
+            ]
+            for pattern in func_patterns:
+                for match in re.finditer(pattern, source_code):
+                    source_funcs.add(match.group(1))
+            
+            # Extract function/method names being tested
+            tested_funcs = set()
+            # Patterns that indicate a function is being tested
+            test_func_patterns = [
+                r"test\w*_(\w+)", 
+                r"test\s+that\s+(\w+)",
+                r"(\w+)\s*\([^)]*\)\s*(?:should|must|will)",
+                r"(?:assert|expect)[^;]*(?:\.|\s+)(\w+)\s*\("
+            ]
+            for pattern in test_func_patterns:
+                for match in re.finditer(pattern, test_code):
+                    tested_funcs.add(match.group(1))
+            
+            # Calculate coverage if we found functions
+            if source_funcs:
+                coverage_ratio = len(tested_funcs.intersection(source_funcs)) / len(source_funcs)
+                
+            # Enhanced: Check for function calls in source code and test code
+            source_calls = set()
+            call_patterns = [
+                r"(\w+)\s*\(", 
+                r"\.(\w+)\s*\("
+            ]
+            
+            for pattern in call_patterns:
+                for match in re.finditer(pattern, source_code):
+                    func_name = match.group(1)
+                    if func_name and not func_name.startswith("_") and len(func_name) > 1:
+                        source_calls.add(func_name)
+            
+            test_calls = set()
+            for pattern in call_patterns:
+                for match in re.finditer(pattern, test_code):
+                    func_name = match.group(1)
+                    if func_name and not func_name.startswith("_") and len(func_name) > 1:
+                        test_calls.add(func_name)
+            
+            # Calculate call coverage ratio
+            if source_calls:
+                call_coverage = len(test_calls.intersection(source_calls)) / len(source_calls)
+                # Combine both coverage metrics if available
+                if coverage_ratio is not None:
+                    coverage_ratio = (coverage_ratio + call_coverage) / 2
+                else:
+                    coverage_ratio = call_coverage
+        
+        # Calculate final score based on available metrics
+        if coverage_ratio is not None:
+            # If we have a coverage ratio, use it
+            score = coverage_ratio
+        else:
+            # Otherwise base score on test count with diminishing returns
+            score = min(1.0, math.sqrt(test_count / 10))
+        
+        return {
+            "score": score,
+            "test_count": test_count,
+            "coverage_ratio": coverage_ratio
+        }
+        
+    def _calculate_test_variety(self, test_code: str) -> Dict[str, Any]:
+        """
+        Calculate the variety of testing approaches used.
+        
+        Args:
+            test_code: The test code
+            
+        Returns:
+            Dictionary with variety score and related metrics
+        """
+        approaches_used = {}
+        
+        # Check for different testing approaches
+        approaches_used["parameterized"] = any(
+            re.search(pattern, test_code)
+            for pattern in self.test_type_patterns["parameterized"]
+        )
+        
+        approaches_used["mocking"] = any(
+            re.search(pattern, test_code)
+            for pattern in self.test_type_patterns["mocking"]
+        )
+        
+        # Check for setup/teardown
+        approaches_used["setup_teardown"] = re.search(
+            r"(?:setUp|tearDown|beforeEach|afterEach|beforeAll|afterAll|@Before|@After)", 
+            test_code
+        ) is not None
+        
+        # Check for test grouping
+        approaches_used["test_grouping"] = re.search(
+            r"(?:describe\s*\(|suite\s*\(|class\s+\w+Test|@Nested)", 
+            test_code
+        ) is not None
+        
+        # Check for data-driven tests
+        approaches_used["data_driven"] = re.search(
+            r"(?:test.each|@TestFactory|@DataProvider|testdata|@UseDataProvider)", 
+            test_code
+        ) is not None
+        
+        # New: Check for integration tests
+        approaches_used["integration"] = any(
+            re.search(pattern, test_code)
+            for pattern in self.test_type_patterns["integration"]
+        )
+        
+        # New: Check for performance tests
+        approaches_used["performance"] = any(
+            re.search(pattern, test_code)
+            for pattern in self.test_type_patterns["performance"]
+        )
+        
+        # New: Check for security tests
+        approaches_used["security"] = any(
+            re.search(pattern, test_code)
+            for pattern in self.test_type_patterns["security"]
+        )
+        
+        # Count the number of approaches used
+        approaches_count = sum(1 for used in approaches_used.values() if used)
+        
+        # Calculate score based on approaches used
+        score = min(1.0, approaches_count / 4)  # 4+ approaches = perfect score
+        
+        return {
+            "score": score,
+            "approaches": approaches_used,
+            "approaches_count": approaches_count
+        }
+        
+    def _calculate_edge_case_coverage(self, test_code: str, 
+                                     task_description: str = None) -> Dict[str, Any]:
+        """
+        Calculate how well edge cases are covered in the tests.
+        
+        Args:
+            test_code: The test code
+            task_description: Optional task description for relevance assessment
+            
+        Returns:
+            Dictionary with edge case score and related metrics
+        """
+        # Look for edge case testing patterns
+        edge_case_matches = []
+        for pattern in self.test_type_patterns["edge_case"]:
+            edge_case_matches.extend(re.finditer(pattern, test_code, re.IGNORECASE))
+        
+        # Count unique edge case tests
+        edge_case_count = len(edge_case_matches)
+        
+        # Look for specific types of edge cases
+        edge_case_types = {
+            "null_empty": re.search(r"(?:null|none|empty|undefined|''|\"\")", test_code) is not None,
+            "boundary": re.search(r"(?:boundary|limit|min|max|zero|negative)", test_code) is not None,
+            "error": re.search(r"(?:exception|error|throw|invalid|fail)", test_code) is not None,
+            "large_inputs": re.search(r"(?:large|big|huge|overflow|many|multiple)", test_code) is not None,
+            "special_chars": re.search(r"(?:special|character|symbol|unicode|escape)", test_code) is not None,
+            # New: Additional edge case types
+            "concurrency": re.search(r"(?:concurrent|parallel|race|thread|async|timing)", test_code) is not None,
+            "security": re.search(r"(?:security|inject|hack|attack|exploit|overflow)", test_code) is not None,
+            "performance": re.search(r"(?:performance|slow|fast|timeout|delay|wait)", test_code) is not None
+        }
+        
+        # Count types of edge cases covered
+        types_covered = sum(1 for covered in edge_case_types.values() if covered)
+        
+        # New: Analyze if edge cases are relevant to task description
+        relevance_score = 0.0
+        if task_description:
+            task_lower = task_description.lower()
+            relevant_edge_cases = 0
+            
+            # Look for edge case types mentioned in the task description
+            edge_case_keywords = {
+                "null_empty": ["null", "none", "empty", "undefined"],
+                "boundary": ["boundary", "limit", "min", "max", "zero", "negative"],
+                "error": ["exception", "error", "throw", "invalid", "fail"],
+                "large_inputs": ["large", "big", "huge", "overflow", "many", "multiple"],
+                "special_chars": ["special", "character", "symbol", "unicode", "escape"],
+                "concurrency": ["concurrent", "parallel", "race", "thread", "async", "timing"],
+                "security": ["security", "inject", "hack", "attack", "exploit", "overflow"],
+                "performance": ["performance", "slow", "fast", "timeout", "delay", "wait"]
+            }
+            
+            for category, keywords in edge_case_keywords.items():
+                category_relevant = any(keyword in task_lower for keyword in keywords)
+                if category_relevant and edge_case_types.get(category, False):
+                    relevant_edge_cases += 1
+            
+            # Calculate relevance score
+            if types_covered > 0:
+                relevance_score = relevant_edge_cases / types_covered
+        
+        # Calculate edge case score with relevance weighting
+        type_score = types_covered / len(edge_case_types)
+        count_score = min(1.0, edge_case_count / 5)  # 5+ edge cases = perfect score
+        
+        # If we have relevance information, include it in the score
+        if relevance_score > 0:
+            score = (type_score + count_score + relevance_score) / 3
+        else:
+            score = (type_score + count_score) / 2
+        
+        return {
+            "score": score,
+            "edge_case_count": edge_case_count,
+            "edge_case_types": edge_case_types,
+            "types_covered": types_covered,
+            "relevance_score": relevance_score
+        }
+        
+    def _calculate_assertion_density(self, test_code: str) -> Dict[str, Any]:
+        """
+        Calculate the density of assertions per test case.
+        
+        Args:
+            test_code: The test code
+            
+        Returns:
+            Dictionary with assertion density and related metrics
+        """
+        # Count test functions
+        test_count = 0
+        for pattern in self.test_type_patterns["unit"]:
+            test_count += len(re.findall(pattern, test_code))
+        
+        test_count = max(1, test_count)  # Avoid division by zero
+        
+        # Count assertions
+        assertion_count = 0
+        for pattern in self.test_type_patterns["assertion"]:
+            assertion_count += len(re.findall(pattern, test_code))
+        
+        # New: Analyze assertion types for variety
+        assertion_types = {
+            "equality": re.search(r"(?:assertEquals|assertEqual|equal|toBe|strictEqual|deepEqual)", test_code) is not None,
+            "boolean": re.search(r"(?:assertTrue|assertFalse|isTrue|isFalse|toBeTruthy|toBeFalsy)", test_code) is not None,
+            "null_check": re.search(r"(?:assertNull|assertNotNull|isNull|isNotNull|toBeNull|undefined)", test_code) is not None,
+            "exception": re.search(r"(?:assertThrows|assertRaises|toThrow|expect\([^)]+\)\.to(?:Throw|Reject))", test_code) is not None,
+            "collection": re.search(r"(?:assertContains|assertIn|hasItem|includes|contains)", test_code) is not None
+        }
+        
+        # Count assertion types
+        assertion_types_count = sum(1 for used in assertion_types.values() if used)
+        
+        # Calculate density
+        assertion_density = assertion_count / test_count
+        
+        # Normalize score (optimal density is around 3-5 assertions per test)
+        if assertion_density <= 0:
+            normalized_score = 0.0
+        elif assertion_density < 1:
+            normalized_score = assertion_density * 0.5  # Less than 1 assertion per test is suboptimal
+        elif assertion_density <= 5:
+            normalized_score = 0.5 + (assertion_density / 10)  # Linear increase up to 5
+        else:
+            # More than 5 assertions per test is good but could indicate test doing too much
+            normalized_score = min(1.0, 1.0 - ((assertion_density - 5) * 0.02))
+        
+        # Adjust for assertion variety
+        if assertion_types_count > 1 and normalized_score < 1.0:
+            # Boost score if there's variety in assertion types
+            variety_boost = min(0.2, 0.05 * assertion_types_count)
+            normalized_score = min(1.0, normalized_score + variety_boost)
+        
+        return {
+            "value": assertion_density,
+            "assertion_count": assertion_count,
+            "test_count": test_count,
+            "normalized_score": normalized_score,
+            "assertion_types": assertion_types,
+            "assertion_types_count": assertion_types_count
+        }
+        
+    def _calculate_readability(self, test_code: str) -> Dict[str, Any]:
+        """
+        Calculate the readability of test code.
+        
+        Args:
+            test_code: The test code
+            
+        Returns:
+            Dictionary with readability score and related metrics
+        """
+        # Split code into lines
+        lines = test_code.splitlines()
+        total_lines = len(lines)
+        if total_lines == 0:
+            return {"score": 0.0, "metrics": {}}
+        
+        # Calculate metrics
+        metrics = {}
+        
+        # Check for comments
+        comment_lines = 0
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("//") or stripped.startswith("#") or stripped.startswith("*"):
+                comment_lines += 1
+        
+        metrics["comment_ratio"] = comment_lines / total_lines
+        
+        # Check for descriptive test names
+        descriptive_names = len(re.findall(r"test_\w{8,}", test_code)) / max(1, len(re.findall(r"test_\w+", test_code)))
+        metrics["descriptive_names"] = descriptive_names
+        
+        # Check for test organization (test classes, describes, etc)
+        metrics["organized"] = re.search(r"(class\s+\w+Test|describe\s*\(|context\s*\()", test_code) is not None
+        
+        # New: Check for consistent naming conventions
+        function_names = re.findall(r"(?:def|function)\s+(\w+)", test_code)
+        snake_case_count = sum(1 for name in function_names if re.match(r"[a-z_]+(?:_[a-z0-9_]+)*", name))
+        camel_case_count = sum(1 for name in function_names if re.match(r"[a-z]+(?:[A-Z][a-z0-9]*)+", name))
+        pascal_case_count = sum(1 for name in function_names if re.match(r"[A-Z][a-z0-9]*(?:[A-Z][a-z0-9]*)+", name))
+        
+        if function_names:
+            max_style_count = max(snake_case_count, camel_case_count, pascal_case_count)
+            metrics["naming_consistency"] = max_style_count / len(function_names)
+        else:
+            metrics["naming_consistency"] = 0.0
+        
+        # Check average line length (too long is hard to read)
+        avg_line_length = sum(len(line) for line in lines) / total_lines
+        metrics["avg_line_length"] = avg_line_length
+        line_length_score = max(0.0, min(1.0, 2.0 - (avg_line_length / 80)))
+        
+        # New: Check for grouping related tests
+        # Look for nested describes, contexts, or test classes
+        nested_structure_count = len(re.findall(r"(?:describe|context)\s*\([^)]+\)\s*{[\s\S]*(?:describe|context)\s*\([^)]+\)", test_code))
+        metrics["nested_structure"] = nested_structure_count > 0
+        
+        # Calculate overall readability score
+        comment_score = min(1.0, metrics["comment_ratio"] * 5)  # Aim for ~20% comments
+        
+        readability_score = (
+            comment_score * 0.2 +
+            descriptive_names * 0.3 +
+            (1.0 if metrics["organized"] else 0.0) * 0.2 +
+            metrics.get("naming_consistency", 0.0) * 0.1 +
+            line_length_score * 0.1 +
+            (1.0 if metrics.get("nested_structure", False) else 0.0) * 0.1
+        )
+        
+        return {
+            "score": readability_score,
+            "metrics": metrics
+        }
+    
+    def _calculate_relevance(self, test_code: str, task_description: str = None) -> Dict[str, Any]:
+        """
+        Calculate how relevant the tests are to the task description.
+        
+        Args:
+            test_code: The test code
+            task_description: The task description
+            
+        Returns:
+            Dictionary with relevance score and metrics
+        """
+        if not task_description:
+            # If no task description provided, assume neutral relevance
+            return {"score": 0.5, "metrics": {}}
+        
+        # Extract key terms from task description
+        task_terms = self._extract_key_terms(task_description)
+        if not task_terms:
+            return {"score": 0.5, "metrics": {}}
+        
+        # Look for task terms in test code
+        term_matches = {}
+        test_code_lower = test_code.lower()
+        
+        for term in task_terms:
+            if term.lower() in test_code_lower:
+                term_matches[term] = True
+        
+        # Calculate term coverage
+        term_coverage = len(term_matches) / len(task_terms) if task_terms else 0.0
+        
+        # Look for task-specific patterns in test code
+        function_names = re.findall(r"(?:def|function)\s+(\w+)", test_code)
+        function_name_matches = 0
+        
+        for func_name in function_names:
+            func_name_lower = func_name.lower()
+            for term in task_terms:
+                if term.lower() in func_name_lower:
+                    function_name_matches += 1
+                    break
+        
+        function_name_relevance = function_name_matches / len(function_names) if function_names else 0.0
+        
+        # Calculate overall relevance score
+        relevance_score = 0.6 * term_coverage + 0.4 * function_name_relevance
+        
+        return {
+            "score": relevance_score,
+            "metrics": {
+                "term_coverage": term_coverage,
+                "function_name_relevance": function_name_relevance,
+                "matched_terms": list(term_matches.keys()),
+                "task_terms": list(task_terms)
+            }
+        }
+    
+    def _extract_key_terms(self, text: str) -> Set[str]:
+        """Extract key technical terms from text."""
+        if not text:
+            return set()
+            
+        # Clean text and split into words
+        cleaned_text = re.sub(r'[^\w\s]', ' ', text.lower())
+        words = cleaned_text.split()
+        
+        # Filter out common words and very short words
+        common_words = {
+            'the', 'a', 'an', 'and', 'or', 'but', 'if', 'then', 'else', 'when',
+            'of', 'to', 'in', 'on', 'at', 'by', 'for', 'with', 'about', 'against',
+            'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below',
+            'from', 'up', 'down', 'is', 'am', 'are', 'was', 'were', 'be', 'been', 'being',
+            'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'shall', 'should',
+            'can', 'could', 'may', 'might', 'must', 'ought', 'i', 'you', 'he', 'she', 'it',
+            'we', 'they', 'this', 'that', 'these', 'those'
+        }
+        
+        key_terms = {word for word in words 
+                    if word not in common_words and len(word) > 2}
+        
+        # Also look for camelCase and snake_case terms
+        camel_case = re.findall(r'[a-z]+(?:[A-Z][a-z]+)+', text)
+        snake_case = re.findall(r'[a-z]+(?:_[a-z]+)+', text)
+        
+        key_terms.update(term.lower() for term in camel_case)
+        key_terms.update(term.lower() for term in snake_case)
+        
+        return key_terms
+    
+    def _calculate_assertion_quality(self, test_code: str) -> Dict[str, Any]:
+        """
+        Calculate the quality of assertions used in the tests.
+        
+        Args:
+            test_code: The test code
+            
+        Returns:
+            Dictionary with assertion quality score and metrics
+        """
+        # Check for different quality aspects of assertions
+        quality_aspects = {}
+        
+        for aspect_name, patterns in self.assertion_quality_patterns.items():
+            quality_aspects[aspect_name] = any(
+                re.search(pattern, test_code, re.IGNORECASE)
+                for pattern in patterns
+            )
+        
+        # Count exact match assertions (usually better than loose comparisons)
+        exact_match_count = 0
+        for pattern in self.assertion_quality_patterns["exact_match"]:
+            exact_match_count += len(re.findall(pattern, test_code, re.IGNORECASE))
+        
+        # Count total assertions
+        total_assertions = 0
+        for pattern in self.test_type_patterns["assertion"]:
+            total_assertions += len(re.findall(pattern, test_code, re.IGNORECASE))
+        
+        # Calculate ratio of high-quality assertions to all assertions
+        exact_match_ratio = exact_match_count / total_assertions if total_assertions > 0 else 0.0
+        
+        # Count quality aspects covered
+        aspects_covered = sum(1 for covered in quality_aspects.values() if covered)
+        aspect_ratio = aspects_covered / len(quality_aspects)
+        
+        # Check for custom assertion messages (indicates better test design)
+        custom_message_count = 0
+        for pattern in self.assertion_quality_patterns["custom_message"]:
+            custom_message_count += len(re.findall(pattern, test_code, re.IGNORECASE))
+        
+        custom_message_ratio = custom_message_count / total_assertions if total_assertions > 0 else 0.0
+        
+        # Calculate overall assertion quality score
+        quality_score = (
+            0.4 * aspect_ratio +
+            0.4 * exact_match_ratio +
+            0.2 * custom_message_ratio
+        )
+        
+        return {
+            "score": quality_score,
+            "metrics": {
+                "aspects_covered": aspects_covered,
+                "quality_aspects": quality_aspects,
+                "exact_match_ratio": exact_match_ratio,
+                "custom_message_ratio": custom_message_ratio,
+                "total_assertions": total_assertions
+            }
+        }
+    
+    def _calculate_complexity_coverage(self, test_code: str, source_code: str = None) -> Dict[str, Any]:
+        """
+        Calculate how well the tests cover the complexity of the source code.
+        
+        Args:
+            test_code: The test code
+            source_code: The source code being tested
+            
+        Returns:
+            Dictionary with complexity coverage score and metrics
+        """
+        # If no source code, this metric can't be calculated accurately
+        if not source_code:
+            return {"score": 0.5, "metrics": {}}
+        
+        # Identify cyclomatic complexity indicators in source code
+        complexity_indicators = {
+            "if_statements": len(re.findall(r'\bif\s+', source_code)),
+            "else_clauses": len(re.findall(r'\belse\s+', source_code)),
+            "for_loops": len(re.findall(r'\bfor\s+', source_code)),
+            "while_loops": len(re.findall(r'\bwhile\s+', source_code)),
+            "switch_cases": len(re.findall(r'\bswitch\s+|\bcase\s+', source_code)),
+            "try_catches": len(re.findall(r'\btry\s+|\bcatch\s+', source_code)),
+            "logical_operators": len(re.findall(r'\&\&|\|\|', source_code))
+        }
+        
+        # Calculate total complexity
+        total_complexity = sum(complexity_indicators.values())
+        
+        # Look for test cases that likely cover these complexity points
+        test_coverage_indicators = {
+            "if_coverage": len(re.findall(r'(?:test|it|should).*\bif\b', test_code, re.IGNORECASE)),
+            "else_coverage": len(re.findall(r'(?:test|it|should).*\belse\b', test_code, re.IGNORECASE)),
+            "loop_coverage": len(re.findall(r'(?:test|it|should).*\b(?:for|while|loop|iteration)\b', test_code, re.IGNORECASE)),
+            "exception_coverage": len(re.findall(r'(?:test|it|should).*\b(?:exception|error|throw|catch|try)\b', test_code, re.IGNORECASE)),
+            "condition_coverage": len(re.findall(r'(?:test|it|should).*\b(?:condition|branch)\b', test_code, re.IGNORECASE))
+        }
+        
+        # Calculate a coverage metric
+        test_indicators_total = sum(test_coverage_indicators.values())
+        
+        # Estimate coverage based on ratio of test indicators to code complexity
+        if total_complexity == 0:
+            estimated_coverage = 0.5  # No complexity to cover, default to neutral
+        else:
+            # We want to see more test indicators than complexity indicators for full coverage
+            # Ideal ratio is at least 1:1, but more indicators in tests is better
+            raw_ratio = test_indicators_total / total_complexity
+            estimated_coverage = min(1.0, raw_ratio)
+        
+        # Check for explicit test patterns indicating intent to cover complex scenarios
+        complex_scenario_patterns = [
+            r"test.*\bedge\s*case\b",
+            r"test.*\bboundary\b",
+            r"test.*\bcorner\s*case\b",
+            r"test.*\bcomplexity\b",
+            r"test.*\bcoverage\b",
+            r"test.*\bscenario\b"
+        ]
+        
+        explicit_coverage = any(re.search(pattern, test_code, re.IGNORECASE) 
+                               for pattern in complex_scenario_patterns)
+        
+        # Boost score if there's explicit intent to cover complex cases
+        final_score = estimated_coverage
+        if explicit_coverage and final_score < 0.9:
+            final_score = min(1.0, final_score + 0.1)
+        
+        return {
+            "score": final_score,
+            "metrics": {
+                "source_complexity": complexity_indicators,
+                "total_complexity": total_complexity,
+                "test_coverage_indicators": test_coverage_indicators,
+                "test_indicators_total": test_indicators_total,
+                "estimated_coverage": estimated_coverage,
+                "explicit_complex_coverage": explicit_coverage
+            }
+        }
+        
+    def _calculate_overall_quality(self, scores: List[float]) -> float:
+        """
+        Calculate overall test quality from component scores.
+        
+        Args:
+            scores: List of component scores
+            
+        Returns:
+            Overall quality score from 0.0 to 1.0
+        """
+        if not scores:
+            return 0.0
+        
+        # Enhanced weights to emphasize the most important aspects
+        weights = [
+            0.20,  # completeness
+            0.15,  # variety
+            0.15,  # edge case coverage
+            0.10,  # assertion density
+            0.10,  # readability
+            0.10,  # relevance
+            0.10,  # assertion quality
+            0.10   # complexity coverage
+        ]
+        
+        # Ensure we have the right number of weights
+        if len(weights) != len(scores):
+            weights = [1.0 / len(scores)] * len(scores)
+            
+        # Calculate weighted average
+        overall = sum(score * weight for score, weight in zip(scores, weights))
+        
+        return min(1.0, max(0.0, overall))
+
+def evaluate_test_quality(test_code: str, task_description: str = None,
+                         source_code: str = None, language: str = None) -> Dict[str, Any]:
+    """
+    Evaluate the quality of test code using various metrics.
+    
+    Args:
+        test_code: The test code to evaluate
+        task_description: Optional task description for relevance assessment
+        source_code: Optional source code being tested
+        language: Optional programming language for language-specific analysis
+        
+    Returns:
+        Dictionary containing test quality metrics
+    """
+    evaluator = TestQualityMetrics()
+    return evaluator.evaluate_test_quality(test_code, task_description, source_code, language)

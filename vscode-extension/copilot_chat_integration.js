@@ -23,6 +23,15 @@ class CopilotChatIntegration {
         this.lastProcessedSuggestion = null;
         this.suggestionCache = new Set(); // Cache to track processed suggestions
         this.suggestionCacheTimeout = 5000; // Time in ms to keep suggestions in cache
+        this.autoCaptureChatHistory = vscode.workspace.getConfiguration('aiDevelopmentMonitor').get('autoCaptureChatHistory', true);
+        
+        // Listen for configuration changes
+        this.configChangeListener = vscode.workspace.onDidChangeConfiguration(e => {
+            if (e.affectsConfiguration('aiDevelopmentMonitor.autoCaptureChatHistory')) {
+                this.autoCaptureChatHistory = vscode.workspace.getConfiguration('aiDevelopmentMonitor').get('autoCaptureChatHistory', true);
+                Logger.info(`Auto-capture chat history setting changed to: ${this.autoCaptureChatHistory}`, 'copilot-chat');
+            }
+        });
         
         // Register as a listener for context changes from other sources
         this.contextChangeUnsubscribe = contextManager.registerListener(this.handleContextChange.bind(this));
@@ -113,6 +122,23 @@ class CopilotChatIntegration {
         // Command to view extracted context
         vscode.commands.registerCommand('aiDevelopmentMonitor.viewExtractedContext', () => {
             this.showExtractedContext();
+        });
+        
+        // Command to send "Continue" to Copilot Chat
+        vscode.commands.registerCommand('aiDevelopmentMonitor.copilotChatContinue', () => {
+            this.sendContinue(true);
+        });
+        
+        // Command to request changes from Copilot Chat
+        vscode.commands.registerCommand('aiDevelopmentMonitor.copilotChatRequestChanges', async () => {
+            // Prompt the user for specific feedback
+            const feedback = await vscode.window.showInputBox({
+                placeHolder: "Enter specific feedback (optional)",
+                prompt: "What changes would you like to request?"
+            });
+            
+            // Send the request changes message
+            this.requestChanges(feedback || "", true);
         });
     }
     
@@ -397,8 +423,13 @@ class CopilotChatIntegration {
                     codeBlocks
                 });
                 
-                // Process any new context
-                this.debouncedExtractContext();
+                // Process any new context - auto-extract if enabled
+                if (this.autoCaptureChatHistory) {
+                    this.debouncedExtractContext(true);
+                    Logger.debug('Auto-capturing chat history enabled, extracting context', 'copilot-chat');
+                } else {
+                    Logger.debug('Auto-capturing chat history disabled, skipping extraction', 'copilot-chat');
+                }
             }
         } catch (error) {
             Logger.error(`Error processing chat message: ${error.message}`, 'copilot-chat');
@@ -420,19 +451,31 @@ class CopilotChatIntegration {
     }
     
     /**
-     * Debounce the context extraction to avoid too frequent updates
+     * Extract context from the current chat history via a debounced function
+     * This prevents multiple extractions from happening in rapid succession
+     * @param {boolean} showNotification Whether to show a notification about the extraction
      */
-    debouncedExtractContext() {
+    debouncedExtractContext(showNotification = false) {
         if (this.extractionDebounceTimer) {
             clearTimeout(this.extractionDebounceTimer);
         }
         
-        // Use a longer debounce time to reduce frequency of extractions
         this.extractionDebounceTimer = setTimeout(() => {
             if (!this.pendingExtraction) {
-                this.extractContextFromChat();
+                const result = this.extractContextFromChat();
+                
+                // Show a subtle notification if auto-capture is enabled and we have a result
+                if (this.autoCaptureChatHistory && result && showNotification) {
+                    const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor');
+                    const notificationLevel = config.get('notificationLevel', 'normal');
+                    
+                    // Only show notifications if not in minimal mode
+                    if (notificationLevel !== 'minimal') {
+                        vscode.window.setStatusBarMessage('$(telescope) AI Monitor: Captured Copilot Chat', 3000);
+                    }
+                }
             }
-        }, 1000); // Increased from 500ms to 1000ms
+        }, 1000); // Wait 1 second after the last call
     }
     
     /**
@@ -1098,6 +1141,13 @@ class CopilotChatIntegration {
             Logger.debug('Unregistered from context manager', 'copilot-chat');
         }
         
+        // Dispose configuration change listener
+        if (this.configChangeListener) {
+            this.configChangeListener.dispose();
+            this.configChangeListener = null;
+            Logger.debug('Disposed configuration change listener', 'copilot-chat');
+        }
+        
         // Clean up all webview-related listeners
         if (this.webviewListeners && this.webviewListeners.length > 0) {
             Logger.debug(`Disposing ${this.webviewListeners.length} webview listeners`, 'copilot-chat');
@@ -1136,6 +1186,98 @@ class CopilotChatIntegration {
         
         Logger.info(`Cleared chat history (${chatHistorySize} items) and suggestion cache (${suggestionCacheSize} items)`, 'copilot-chat');
         Logger.info('CopilotChatIntegration resources successfully disposed', 'copilot-chat');
+    }
+
+    /**
+     * Send a message to GitHub Copilot Chat
+     * @param {string} message - The message to send
+     * @param {boolean} showNotification - Whether to show a notification about the action
+     * @returns {Promise<boolean>} Whether the message was sent successfully
+     */
+    async sendMessageToChat(message, showNotification = false) {
+        try {
+            if (!this.isAvailable) {
+                Logger.warn('Cannot send message: GitHub Copilot Chat is not available', 'copilot-chat');
+                if (showNotification) {
+                    vscode.window.showWarningMessage('GitHub Copilot Chat is not available. Please install and activate the extension.');
+                }
+                return false;
+            }
+
+            // First check if the chat panel is already open
+            let chatPanelOpen = false;
+            try {
+                // Try to execute a chat-specific command to see if panel is open
+                chatPanelOpen = await vscode.commands.executeCommand('github.copilot.chat.focus');
+            } catch (e) {
+                // If command fails, panel is not open
+                chatPanelOpen = false;
+            }
+            
+            // If panel is not open, try to open a new chat
+            if (!chatPanelOpen) {
+                try {
+                    await vscode.commands.executeCommand('github.copilot.chat.start');
+                    // Wait a bit longer for the new panel to initialize
+                    await new Promise(resolve => setTimeout(resolve, 800));
+                } catch (e) {
+                    Logger.warn('Failed to open Copilot Chat panel', 'copilot-chat');
+                    // Try to focus the panel again as a fallback
+                    await vscode.commands.executeCommand('github.copilot.chat.focus');
+                }
+            }
+            
+            // Wait a moment for the panel to become active
+            await new Promise(resolve => setTimeout(resolve, 300));
+            
+            // Use clipboard to temporarily store the message
+            await vscode.env.clipboard.writeText(message);
+            
+            // Simulate keyboard input by pasting the message
+            await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
+            
+            // Add a small delay before sending
+            await new Promise(resolve => setTimeout(resolve, 200));
+            
+            // Press enter to send the message
+            await vscode.commands.executeCommand('workbench.action.terminal.sendSequence', { text: '\u000D' }); // Carriage return
+            
+            if (showNotification) {
+                vscode.window.showInformationMessage(`Sent to Copilot Chat: ${message}`);
+            }
+            
+            Logger.info(`Message sent to GitHub Copilot Chat: ${message}`, 'copilot-chat');
+            return true;
+        } catch (error) {
+            Logger.error(`Error sending message to GitHub Copilot Chat: ${error.message}`, error, 'copilot-chat');
+            if (showNotification) {
+                vscode.window.showErrorMessage(`Failed to send message to GitHub Copilot Chat: ${error.message}`);
+            }
+            return false;
+        }
+    }
+    
+    /**
+     * Send a "continue" message to GitHub Copilot Chat
+     * @param {boolean} showNotification - Whether to show a notification
+     * @returns {Promise<boolean>} Whether the message was sent successfully
+     */
+    async sendContinue(showNotification = true) {
+        return await this.sendMessageToChat("Continue", showNotification);
+    }
+    
+    /**
+     * Send a "request changes" message to GitHub Copilot Chat
+     * @param {string} feedback - Optional specific feedback to include
+     * @param {boolean} showNotification - Whether to show a notification
+     * @returns {Promise<boolean>} Whether the message was sent successfully
+     */
+    async requestChanges(feedback = "", showNotification = true) {
+        let message = "Please make the following changes:";
+        if (feedback) {
+            message += " " + feedback;
+        }
+        return await this.sendMessageToChat(message, showNotification);
     }
 }
 

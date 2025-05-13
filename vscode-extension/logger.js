@@ -25,6 +25,107 @@ let config = {
 // VS Code output channel
 let outputChannel = null;
 
+// Rate limiting cache
+const logCache = new Map();
+// Default values that can be overridden by configuration
+let LOG_RATE_WINDOW_MS = 2000; // 2 seconds window for duplicate detection
+let MAX_DUPLICATE_LOGS = 3; // Allow at most 3 identical logs within the window
+const MAX_CACHE_SIZE = 100; // Prevent memory leaks by limiting cache size
+
+/**
+ * Check if a log message should be rate limited
+ * @param {string} level Log level
+ * @param {string} message Message to log
+ * @param {string} category Log category
+ * @returns {boolean} True if the message should be rate limited
+ */
+function shouldRateLimit(level, message, category) {
+    // Don't rate limit ERROR or WARN levels
+    if (level === 'ERROR' || level === 'WARN') {
+        return false;
+    }
+    
+    // Create a hash for the message
+    const msgHash = `${level}:${category}:${message.substring(0, 100)}`;
+    const now = Date.now();
+    
+    // Clean up old entries to prevent memory leaks
+    if (logCache.size > MAX_CACHE_SIZE) {
+        const oldestTime = now - LOG_RATE_WINDOW_MS;
+        for (const [key, value] of logCache.entries()) {
+            if (value.timestamp < oldestTime) {
+                logCache.delete(key);
+            }
+        }
+    }
+    
+    // Check if this message is being repeated too frequently
+    if (logCache.has(msgHash)) {
+        const cached = logCache.get(msgHash);
+        
+        // If within rate window and exceeds count, rate limit
+        if (now - cached.timestamp < LOG_RATE_WINDOW_MS) {
+            cached.count++;
+            cached.lastSeen = now;
+            
+            // If we've seen too many of these messages, rate limit
+            if (cached.count > MAX_DUPLICATE_LOGS) {
+                // Only log a rate limit warning once per window
+                if (!cached.limitWarned) {
+                    cached.limitWarned = true;
+                    console.log(`[RATE LIMITED] Similar "${level}" log in "${category}" repeated ${cached.count} times`);
+                }
+                return true;
+            }
+        } else {
+            // Outside window, reset counter
+            cached.count = 1;
+            cached.timestamp = now;
+            cached.limitWarned = false;
+        }
+        
+        logCache.set(msgHash, cached);
+    } else {
+        // First time seeing this message
+        logCache.set(msgHash, {
+            count: 1,
+            timestamp: now,
+            lastSeen: now,
+            limitWarned: false
+        });
+    }
+    
+    return false;
+}
+
+/**
+ * Check if a log message should be suppressed based on verbosity settings
+ * @param {string} level Log level
+ * @param {string} category Log category
+ * @returns {boolean} True if the message should be suppressed
+ */
+function shouldSuppressBasedOnVerbosity(level, category) {
+    // If no verbosity setting or not DEBUG/TRACE level, don't suppress
+    if (!config.debugVerbosity || (level !== 'DEBUG' && level !== 'TRACE')) {
+        return false;
+    }
+    
+    // Categories that generate a lot of logs
+    const noisyCategories = ['copilot', 'mcp', 'analysis'];
+    
+    // Suppress based on verbosity level
+    if (config.debugVerbosity === 'minimal' && noisyCategories.includes(category)) {
+        return true;
+    }
+    
+    // For normal verbosity, only suppress TRACE level in noisy categories
+    if (config.debugVerbosity === 'normal' && level === 'TRACE' && noisyCategories.includes(category)) {
+        return true;
+    }
+    
+    return false;
+}
+
 /**
  * Initialize the logger
  * @param {*} vscode VS Code API
@@ -41,7 +142,18 @@ function initialize(vscode, context, userConfig = {}) {
         context.subscriptions.push(outputChannel);
     }
     
+    // Update rate limiting settings if provided
+    if (userConfig.rateLimitDuration) {
+        LOG_RATE_WINDOW_MS = userConfig.rateLimitDuration;
+    }
+    
+    if (userConfig.maxDuplicateLogs) {
+        MAX_DUPLICATE_LOGS = userConfig.maxDuplicateLogs;
+    }
+    
+    // Log initialization with rate limit settings
     info('Logger initialized', 'system');
+    debug(`Rate limiting: ${LOG_RATE_WINDOW_MS}ms window, max ${MAX_DUPLICATE_LOGS} duplicates`, 'system');
 }
 
 /**
@@ -52,6 +164,14 @@ function initialize(vscode, context, userConfig = {}) {
  */
 function log(level, message, category = 'general') {
     if (!config.enabled || LOG_LEVEL[level] > config.level) {
+        return;
+    }
+    
+    if (shouldRateLimit(level, message, category)) {
+        return;
+    }
+    
+    if (shouldSuppressBasedOnVerbosity(level, category)) {
         return;
     }
     

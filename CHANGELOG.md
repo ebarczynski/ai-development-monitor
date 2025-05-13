@@ -2,6 +2,17 @@
 
 All notable changes to the Python components of the AI Development Monitor will be documented in this file.
 
+## [0.5.0] - 2025-05-13
+
+### Added
+- Update version to align with VS Code extension release cycle
+- Improve backend communication handling with VS Code extension
+- Standardize versioning across all components
+- Performance optimizations in MCP server
+
+### Changed
+- Update web interface version to maintain consistency
+
 ## [0.4.4] - 2025-05-11
 
 ### Added

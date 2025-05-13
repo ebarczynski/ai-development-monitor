@@ -38,7 +38,12 @@ sequenceDiagram
     MCPClient-->>VSExt: Process evaluation
     VSExt->>User: Display notification with risk assessment
     
-    alt User accepts suggestion
+    alt User accepts suggestion via Command Palette
+        User->>VSExt: Execute "Tell Copilot to Continue" command
+        VSExt->>GHCopilot: Send "Continue" message to chat
+        GHCopilot-->>VSExt: Generate continuation response
+        VSExt->>MCPClient: Process continuation
+    else User requests changes
         User->>VSExt: Accept suggestion
         VSExt->>GHCopilot: Apply suggestion
     else User rejects suggestion

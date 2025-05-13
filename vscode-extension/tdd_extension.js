@@ -88,7 +88,7 @@ async function runTDDCycle(outputChannel, webSocketConnection, conversationId, s
                         outputChannel.appendLine('```');
                         
                         // Process test results
-                        processTestResults(testCode, currentCode, iteration, outputChannel, allTests);
+                        processTestResults(testCode, currentCode, iteration, outputChannel, allTests, filePath);
                         
                         // Improve code for next iteration
                         if (iteration < iterations) {
@@ -323,7 +323,7 @@ function getTDDPurposeForIteration(iteration) {
 /**
  * Process test results from a test response
  */
-function processTestResults(testCode, implementation, iteration, outputChannel, allTests) {
+function processTestResults(testCode, implementation, iteration, outputChannel, allTests, testFilePath = null) {
     // For diagnostic test, we simulate running tests
     const results = simulateTestRun(testCode, implementation, iteration);
     
@@ -339,6 +339,11 @@ function processTestResults(testCode, implementation, iteration, outputChannel, 
     
     // Add to all tests
     allTests.push(...extractedTests);
+    
+    // Store the test file path for later reference
+    if (testFilePath) {
+        outputChannel.appendLine(`Test file path: ${testFilePath}`);
+    }
     
     // Suggest improvements based on test results
     if (results.failed > 0) {
@@ -615,12 +620,23 @@ function updateTDDDashboard(testResults, testCode, implementation, iteration, la
             }
         };
         
+        // Get workspace folders to create a relative path for display
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        let testFilePath = null;
+        
+        // Generate the test file path based on current workspace and iteration
+        if (workspaceFolders && workspaceFolders.length > 0) {
+            const fileName = `tdd_test_${Date.now()}_${iteration}.${language === 'python' ? 'py' : language}`;
+            testFilePath = vscode.Uri.joinPath(workspaceFolders[0].uri, fileName).fsPath;
+        }
+        
         // Create a TDD result object structured like the expected format
         const tddResult = {
             iteration: iteration,
             test_code: testCode,
             implementation_code: implementation,
             language: language,
+            testFilePath: testFilePath, // Add the test file path to the result
             tests: {
                 total: testResults.total,
                 passed: testResults.passed,

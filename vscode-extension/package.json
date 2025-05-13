@@ -2,7 +2,7 @@
   "name": "ai-development-monitor",
   "displayName": "AI Development Monitor",
   "description": "Monitor and evaluate GitHub Copilot suggestions",
-  "version": "0.4.5",
+  "version": "0.5.1",
   "publisher": "local-publisher",
   "license": "MIT",
   "repository": {
@@ -54,8 +54,24 @@
         "title": "AI Monitor: Retry MCP Connection"
       },
       {
+        "command": "ai-development-monitor.showConnectionStatus",
+        "title": "AI Monitor: Show Connection Status"
+      },
+      {
+        "command": "ai-development-monitor.showStatusMenu",
+        "title": "AI Monitor: Show Status Menu"
+      },
+      {
         "command": "ai-development-monitor.viewExtractedContext",
         "title": "AI Monitor: View Extracted Chat Context"
+      },
+      {
+        "command": "ai-development-monitor.copilotChatContinue",
+        "title": "AI Monitor: Tell Copilot to Continue"
+      },
+      {
+        "command": "ai-development-monitor.copilotChatRequestChanges",
+        "title": "AI Monitor: Request Changes from Copilot"
       },
       {
         "command": "ai-development-monitor.showPanel",
@@ -102,7 +118,7 @@
         "aiDevelopmentMonitor.mcpUrl": {
           "type": "string",
           "default": "ws://localhost:5001/ws",
-          "description": "WebSocket URL of the AI Development Monitor MCP server"
+          "description": "URL of the MCP server"
         },
         "aiDevelopmentMonitor.useMcp": {
           "type": "boolean",
@@ -143,9 +159,95 @@
         },
         "aiDevelopmentMonitor.tdd.testFramework": {
           "type": "string",
-          "enum": ["auto", "pytest", "jest", "junit", "googletest"],
+          "enum": [
+            "auto",
+            "pytest",
+            "jest",
+            "junit",
+            "googletest"
+          ],
           "default": "auto",
           "description": "Test framework to use for TDD tests"
+        },
+        "aiDevelopmentMonitor.autoCaptureChatHistory": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically capture GitHub Copilot Chat conversations"
+        },
+        "aiDevelopmentMonitor.connectionTimeoutMs": {
+          "type": "number",
+          "default": 10000,
+          "description": "Connection timeout in milliseconds"
+        },
+        "aiDevelopmentMonitor.maxReconnectAttempts": {
+          "type": "number",
+          "default": 5,
+          "description": "Maximum number of immediate reconnection attempts before switching to persistent mode"
+        },
+        "aiDevelopmentMonitor.reconnectDelayMs": {
+          "type": "number",
+          "default": 2000,
+          "description": "Initial delay between reconnection attempts in milliseconds (will increase with exponential backoff)"
+        },
+        "aiDevelopmentMonitor.exponentialBackoffFactor": {
+          "type": "number",
+          "default": 1.5,
+          "description": "Factor by which to increase reconnection delay on each attempt"
+        },
+        "aiDevelopmentMonitor.persistentReconnectIntervalMs": {
+          "type": "number",
+          "default": 30000,
+          "description": "Interval for persistent reconnection attempts in milliseconds"
+        },
+        "aiDevelopmentMonitor.heartbeatIntervalMs": {
+          "type": "number",
+          "default": 15000,
+          "description": "Interval for heartbeat pings in milliseconds"
+        },
+        "aiDevelopmentMonitor.heartbeatTimeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "description": "Timeout for considering connection dead if no pong received"
+        },
+        "aiDevelopmentMonitor.connectionMonitorIntervalMs": {
+          "type": "number",
+          "default": 30000,
+          "description": "Interval for monitoring connection health in milliseconds"
+        },
+        "aiDevelopmentMonitor.maxQueueLength": {
+          "type": "number",
+          "default": 50,
+          "description": "Maximum number of messages to queue during disconnection"
+        },
+        "aiDevelopmentMonitor.keepQueuedMessagesOnDisconnect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to keep queued messages when disconnecting intentionally"
+        },
+        "aiDevelopmentMonitor.logging.debugVerbosity": {
+          "type": "string",
+          "enum": [
+            "minimal",
+            "normal",
+            "verbose"
+          ],
+          "default": "normal",
+          "description": "Controls the verbosity of debug logging. Set to 'minimal' to reduce log spam for Copilot suggestions."
+        },
+        "aiDevelopmentMonitor.logging.debounceTime": {
+          "type": "number",
+          "default": 1000,
+          "description": "Minimum time in milliseconds between Copilot suggestion logs (higher values reduce log spam)"
+        },
+        "aiDevelopmentMonitor.logging.rateLimitDuration": {
+          "type": "number",
+          "default": 2000,
+          "description": "Rate limit window in milliseconds for duplicate log detection (higher values reduce duplicate logs)"
+        },
+        "aiDevelopmentMonitor.logging.ghostTextCheckInterval": {
+          "type": "number",
+          "default": 2000,
+          "description": "Interval in milliseconds for checking ghost text (higher values reduce CPU usage)"
         }
       }
     }

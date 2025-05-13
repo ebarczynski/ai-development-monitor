@@ -2,6 +2,17 @@
 
 All notable changes to the "AI Development Monitor" extension will be documented in this file.
 
+## [0.5.0] - 2025-05-13
+
+- Add GitHub Copilot Chat interaction functions:
+  - Implement "Continue" command to accept suggestions
+  - Add "Request Changes" function with customizable feedback
+  - Enhance chat panel detection and handling
+  - Add commands to VS Code command palette
+- Improve chat panel state management with automatic opening when needed
+- Add user notification system for chat interactions
+- Add error handling for chat interactions
+
 ## [0.4.5] - 2025-05-11
 
 - Implement chat history management with import/export functionality
