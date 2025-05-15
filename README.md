@@ -6,18 +6,22 @@ A comprehensive system for monitoring and evaluating GitHub Copilot code suggest
 
 ## Components
 
-### 1. Python Backend (v0.5.0)
+### 1. Python Backend (v0.6.0)
 
 - **MCP Server**: Model Context Protocol server for structured AI-to-AI communication
 - **Web Interface**: Real-time visualization of communication logs
 - **Monitor Agent**: Intelligent evaluation of code suggestions using LLM
 - **TDD Framework**: Test-Driven Development support with automated test generation
+- **Test Execution**: JSON-based API for executing tests on code suggestions
+- **C++23 Support**: Enhanced test generation for modern C++ features
 - **Pydantic v2 Support**: Backward compatibility with modern data validation
 
-### 2. VS Code Extension (v0.5.0)
+### 2. VS Code Extension (v0.6.0)
 
 - **Copilot Integration**: Captures and monitors GitHub Copilot suggestions
 - **Copilot Chat Integration**: Interact with GitHub Copilot Chat programmatically
+- **Test Execution**: Run tests on GitHub Copilot Chat code suggestions
+- **TDD Dashboard**: Visualize test execution results with GitHub Copilot integration
 - **Chat Interaction Commands**: Send "Continue" or request changes via command palette
 - **MCP Client**: Communicates with the MCP server via WebSockets
 - **Evaluation UI**: Shows risk scores and recommendations in VS Code
@@ -134,6 +138,24 @@ The TDD functionality follows a 5-iteration cycle:
 Each iteration improves both the test suite and the implementation, progressively enhancing code quality.
 
 ![TDD Flow Diagram](docs/tdd_flow_diagram.png)
+
+### Language Support
+
+The AI Development Monitor supports several programming languages with language-specific test templates:
+
+- **Python**: pytest-based testing with fixtures and parametrized tests
+- **JavaScript**: Jest testing framework with modern JS capabilities
+- **TypeScript**: Type-aware testing with Jest and TypeScript features
+- **Java**: JUnit testing with Java-specific patterns 
+- **C#**: NUnit/xUnit testing for .NET applications
+- **C++**: GTest framework with comprehensive C++23 feature support
+  - Error handling with `std::expected<T, E>`
+  - Formatted output with `std::print` and `std::format`
+  - Modern modules system testing
+  - Advanced threading tests with `std::barrier`
+  - Other C++23 features like `auto(x)` lambdas and spaceship operator
+
+See the [C++23 Support Documentation](docs/cpp23_support.md) for more details on the C++23 feature support.
 
 ## Known Issues
 

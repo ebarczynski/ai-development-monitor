@@ -2,6 +2,17 @@
 
 The AI Development Monitor now supports a comprehensive Test-Driven Development workflow that integrates with GitHub Copilot. This document explains the 5-iteration TDD cycle and how it improves code quality.
 
+## GitHub Copilot Chat Integration
+
+As of version 0.6.0, the AI Development Monitor can automatically run tests on code suggestions from GitHub Copilot Chat. This integration allows developers to:
+
+1. Receive immediate feedback on the quality of Copilot Chat suggestions
+2. View test execution results in the TDD Dashboard
+3. Compare test results across different suggestions
+4. Generate test templates automatically for Copilot suggestions
+
+For detailed information about this feature, see [GitHub Copilot Test Execution](github_copilot_test_execution.md).
+
 ## TDD Cycle Overview
 
 ```mermaid

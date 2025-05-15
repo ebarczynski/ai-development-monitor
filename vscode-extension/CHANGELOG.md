@@ -2,6 +2,17 @@
 
 All notable changes to the "AI Development Monitor" extension will be documented in this file.
 
+## [0.6.0] - 2025-05-14
+
+- Add GitHub Copilot test execution capabilities:
+  - Display test execution results in TDD Dashboard
+  - Automatic test generation for untested code suggestions
+  - Visual differentiation of Copilot test results with custom styling
+  - Add configuration options for controlling test result display
+- Update TDD Dashboard to handle GitHub Copilot test results
+- Improve error handling for test execution
+- Fix path resolution issues in Copilot Chat integration
+
 ## [0.5.0] - 2025-05-13
 
 - Add GitHub Copilot Chat interaction functions:

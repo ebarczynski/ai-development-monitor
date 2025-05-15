@@ -214,6 +214,11 @@ class AIMonitorPanel {
                 this.addLogEntry(`TDD Iteration ${result.iteration}: Generated ${result.test_code.length} bytes of test code`, 'info');
             }
         }
+
+        // Highlight GitHub Copilot test execution results if available
+        if (evaluation.github_copilot_execution) {
+            this.processGitHubCopilotTestResults(evaluation.github_copilot_execution);
+        }
         
         this._update();
     }
@@ -248,14 +253,41 @@ class AIMonitorPanel {
     showTddDetails(index) {
         if (index >= 0 && index < this._tddResults.length) {
             const result = this._tddResults[index];
+            const isGithubCopilot = result.source === 'github-copilot-chat' || result.iteration === 0;
             
-            // Create a untitled file with the test code
+            // Create an untitled file with the code
+            let content = result.test_code;
+            let title = 'Test Code';
+            
+            // For GitHub Copilot results, display both test code and implementation if available
+            if (isGithubCopilot && result.implementation_code) {
+                content = `// Implementation Code (GitHub Copilot Suggestion)
+${result.implementation_code || ''}
+
+// Test Code
+${result.test_code || ''}`;
+                title = 'GitHub Copilot Test Results';
+            }
+            
             vscode.workspace.openTextDocument({
-                content: result.test_code,
+                content: content,
                 language: result.language || 'python'
             })
             .then(doc => {
-                vscode.window.showTextDocument(doc);
+                vscode.window.showTextDocument(doc, { preview: true });
+                
+                // If GitHub Copilot result, show a notification with the test results
+                if (isGithubCopilot) {
+                    const passRate = result.tests?.total > 0 ? result.tests.passed / result.tests.total : 0;
+                    const message = `GitHub Copilot test results: ${result.tests?.passed || 0}/${result.tests?.total || 0} tests passed`;
+                    if (passRate === 1) {
+                        vscode.window.showInformationMessage(message);
+                    } else if (passRate > 0.5) {
+                        vscode.window.showWarningMessage(message);
+                    } else {
+                        vscode.window.showErrorMessage(message);
+                    }
+                }
             });
         }
     }
@@ -476,6 +508,56 @@ class AIMonitorPanel {
     }
     
     /**
+     * Process GitHub Copilot test execution results for display
+     * 
+     * @param {Object} executionResult The test execution result from GitHub Copilot
+     */
+    processGitHubCopilotTestResults(executionResult) {
+        if (!executionResult || typeof executionResult !== 'object') {
+            return;
+        }
+        
+        try {
+            const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor.tdd');
+            if (!config.get('includeGithubCopilotResults', true)) {
+                return;
+            }
+            
+            // Create a new TDD result object for the GitHub Copilot test execution
+            const copilotResult = {
+                iteration: 0, // Use 0 to indicate GitHub Copilot results
+                test_code: executionResult.test_code || '',
+                implementation_code: executionResult.implementation_code || '',
+                language: executionResult.language || 'javascript',
+                source: 'github-copilot-chat',
+                timestamp: new Date().toISOString(),
+                tests: {
+                    total: executionResult.total_tests || 0,
+                    passed: executionResult.passed_tests || 0,
+                    failed: executionResult.failed_tests || 0,
+                    success: executionResult.success || false
+                },
+                execution: {
+                    success: executionResult.success || false,
+                    execution_time: executionResult.execution_time || 0,
+                    errors: executionResult.errors || []
+                }
+            };
+            
+            // Add to TDD results
+            this._tddResults.push(copilotResult);
+            
+            // Update the dashboard
+            this._update();
+            
+            Logger.info(`Added GitHub Copilot test execution results: ${copilotResult.tests.passed}/${copilotResult.tests.total} tests passed`, 'tdd');
+            
+        } catch (error) {
+            Logger.error(`Error processing GitHub Copilot test results: ${error.message}`, 'tdd');
+        }
+    }
+
+    /**
      * Create HTML for the TDD Dashboard
      * @returns {string} HTML content for the TDD Dashboard
      */
@@ -485,6 +567,8 @@ class AIMonitorPanel {
         const showInlineCoverage = config.get('showInlineCoverage', true);
         const defaultIterations = config.get('defaultIterations', 5);
         const testFramework = config.get('testFramework', 'auto');
+        const showExecutionResults = config.get('showExecutionResults', true);
+        const includeGithubCopilotResults = config.get('includeGithubCopilotResults', true);
 
         // Gather TDD metrics from the stored results
         const testMetrics = {
@@ -493,6 +577,7 @@ class AIMonitorPanel {
             failed: 0,
             iterations: this._tddResults.length,
             coverage: 0,
+            executionTime: 0,
             testsByIteration: []
         };
 
@@ -509,8 +594,13 @@ class AIMonitorPanel {
                         total: result.tests.total || 0,
                         passed: result.tests.passed || 0,
                         failed: result.tests.failed || 0,
-                        coverage: result.coverage?.overall || 0
+                        coverage: result.coverage?.overall || 0,
+                        executionTime: result.execution?.execution_time || 0
                     });
+                }
+                
+                if (result.execution && result.execution.execution_time) {
+                    testMetrics.executionTime += result.execution.execution_time;
                 }
                 
                 if (result.coverage && result.coverage.overall) {
@@ -562,6 +652,10 @@ class AIMonitorPanel {
                         <div class="tdd-stat-value">${testMetrics.coverage}%</div>
                         <div class="tdd-stat-label">Avg Coverage</div>
                     </div>
+                    <div class="tdd-stat-box">
+                        <div class="tdd-stat-value">${testMetrics.executionTime > 0 ? testMetrics.executionTime.toFixed(2) + 's' : 'N/A'}</div>
+                        <div class="tdd-stat-label">Execution Time</div>
+                    </div>
                 </div>
                 
                 <div class="tdd-config-section">
@@ -577,6 +671,18 @@ class AIMonitorPanel {
                             <label>
                                 <input type="checkbox" class="tdd-config-toggle" data-setting="showInlineCoverage" ${showInlineCoverage ? 'checked' : ''}>
                                 Show inline coverage
+                            </label>
+                        </div>
+                        <div class="tdd-config-item">
+                            <label>
+                                <input type="checkbox" class="tdd-config-toggle" data-setting="showExecutionResults" ${showExecutionResults ? 'checked' : ''}>
+                                Show execution results
+                            </label>
+                        </div>
+                        <div class="tdd-config-item">
+                            <label>
+                                <input type="checkbox" class="tdd-config-toggle" data-setting="includeGithubCopilotResults" ${includeGithubCopilotResults ? 'checked' : ''}>
+                                Include Copilot Chat results
                             </label>
                         </div>
                         <div class="tdd-config-item">
@@ -613,6 +719,7 @@ class AIMonitorPanel {
                                 <li>Passed: ${testMetrics.passed}</li>
                                 <li>Failed: ${testMetrics.failed}</li>
                                 <li>Average Coverage: ${testMetrics.coverage}%</li>
+                                <li>Total Execution Time: ${testMetrics.executionTime}s</li>
                             </ul>
                             <p><small>Interactive chart visualization requires Chart.js</small></p>
                         </div>
@@ -630,6 +737,10 @@ class AIMonitorPanel {
                         <div class="chart-legend-item">
                             <div class="chart-legend-color" style="background-color: #2196F3;"></div>
                             <span>Coverage %</span>
+                        </div>
+                        <div class="chart-legend-item">
+                            <div class="chart-legend-color" style="background-color: #FF9800;"></div>
+                            <span>Execution Time</span>
                         </div>
                     </div>
                 </div>
@@ -660,25 +771,31 @@ class AIMonitorPanel {
                 ` : ''}
                 
                 ${this._tddResults.length > 0 ? `
-                <div class="tdd-test-files-section">
-                    <h4>Generated Test Files</h4>
-                    <table class="tdd-files-table">
+                <div class="tdd-test-log">
+                    <h4>Test Results by Iteration</h4>
+                    <table class="tdd-results-table">
                         <thead>
                             <tr>
-                                <th>Iteration</th>
+                                <th>Iter</th>
                                 <th>Test File</th>
-                                <th>Status</th>
-                                <th>Actions</th>
+                                <th>Results</th>
+                                <th>Execution Status</th>
+                                <th>Action</th>
                             </tr>
                         </thead>
                         <tbody>
-                            ${this._tddResults.map((result, index) => `
-                            <tr>
-                                <td>#${result.iteration || index + 1}</td>
+                            ${this._tddResults.map((result, index) => {
+                                // Check if this is a GitHub Copilot result (source field and/or iteration 0)
+                                const isGithubCopilot = result.source === 'github-copilot-chat' || result.iteration === 0;
+                                const rowClass = isGithubCopilot ? 'github-copilot-result' : '';
+                                
+                                return `
+                            <tr${rowClass ? ` class="${rowClass}"` : ''} data-source="${result.source || 'tdd'}">
+                                <td>${isGithubCopilot ? 'GH' : result.iteration}</td>
                                 <td>
                                     ${result.testFilePath ? 
                                       `<span class="tdd-file-link" data-path="${result.testFilePath}" data-index="${index}">${result.testFilePath.split('/').pop()}</span>` : 
-                                      'No file created'}
+                                      (isGithubCopilot ? 'GitHub Copilot' : 'No file created')}
                                 </td>
                                 <td>
                                     ${result.tests && result.tests.total ? 
@@ -688,10 +805,27 @@ class AIMonitorPanel {
                                       'Not executed'}
                                 </td>
                                 <td>
-                                    <button class="view-test-btn small-btn" data-index="${index}">View</button>
+                                    ${result.execution ? 
+                                      `<span class="${result.execution.success ? 'success' : 'error'}">
+                                        ${result.execution.success ? 'Success' : 'Failed'}
+                                        ${result.execution.execution_time ? ` (${result.execution.execution_time.toFixed(2)}s)` : ''}
+                                        ${result.execution.errors && result.execution.errors.length > 0 ? 
+                                          `<span class="tooltip">
+                                            ⚠️
+                                            <span class="tooltiptext error-tooltip">
+                                              ${result.execution.errors.slice(0, 3).join('<br>')}
+                                              ${result.execution.errors.length > 3 ? '<br>...' : ''}
+                                            </span>
+                                          </span>` : 
+                                          ''}
+                                      </span>` : 
+                                      'Simulated'}
                                 </td>
-                            </tr>
-                            `).join('')}
+                                <td>
+                                    <button class="tdd-action-button" data-action="view-test" data-index="${index}">View ${isGithubCopilot ? 'Code' : 'Test'}</button>
+                                </td>
+                            </tr>`;
+                            }).join('')}
                         </tbody>
                     </table>
                 </div>
@@ -814,6 +948,30 @@ class AIMonitorPanel {
                             <div class="tdd-summary">
                                 <div>Language: ${result.language || 'python'}</div>
                                 <div>Test Size: ${result.test_code.length} bytes</div>
+                                ${result.execution ? `
+                                <div class="tdd-execution">
+                                    <div class="tdd-exec-header">Execution Results:</div>
+                                    <div class="tdd-execution-bar">
+                                        <div class="tdd-exec-metrics">
+                                            <span class="tdd-exec-passed">${result.execution.passed || 0}</span>/<span class="tdd-exec-total">${result.execution.total || 0}</span> tests passed
+                                            ${result.execution.execution_time ? `(${result.execution.execution_time.toFixed(2)}s)` : ''}
+                                        </div>
+                                        <div class="tdd-exec-bar">
+                                            <div class="tdd-exec-success" style="width: ${result.execution.total > 0 ? (result.execution.passed / result.execution.total) * 100 : 0}%"></div>
+                                        </div>
+                                    </div>
+                                    ${result.execution.errors && result.execution.errors.length > 0 ? `
+                                    <div class="tdd-exec-errors">
+                                        <details>
+                                            <summary>${result.execution.errors.length} error(s)</summary>
+                                            <ul class="tdd-error-list">
+                                                ${result.execution.errors.map(err => `<li>${err}</li>`).join('')}
+                                            </ul>
+                                        </details>
+                                    </div>
+                                    ` : ''}
+                                </div>
+                                ` : ''}
                             </div>
                         </div>
                         `).join('')}
@@ -1038,6 +1196,58 @@ class AIMonitorPanel {
                 .tdd-summary {
                     font-size: 0.9em;
                     color: var(--vscode-descriptionForeground);
+                }
+                
+                .tdd-execution {
+                    margin-top: 8px;
+                    padding-top: 8px;
+                    border-top: 1px solid var(--vscode-panel-border);
+                }
+                
+                .tdd-exec-header {
+                    font-weight: bold;
+                    margin-bottom: 4px;
+                }
+                
+                .tdd-execution-bar {
+                    margin: 4px 0;
+                }
+                
+                .tdd-exec-metrics {
+                    font-size: 0.9em;
+                    margin-bottom: 2px;
+                }
+                
+                .tdd-exec-passed {
+                    color: var(--vscode-terminal-ansiGreen);
+                    font-weight: bold;
+                }
+                
+                .tdd-exec-total {
+                    font-weight: bold;
+                }
+                
+                .tdd-exec-bar {
+                    height: 4px;
+                    background-color: var(--vscode-input-background);
+                    border-radius: 2px;
+                    overflow: hidden;
+                }
+                
+                .tdd-exec-success {
+                    height: 100%;
+                    background-color: var(--vscode-terminal-ansiGreen);
+                }
+                
+                .tdd-exec-errors {
+                    margin-top: 4px;
+                    font-size: 0.85em;
+                }
+                
+                .tdd-error-list {
+                    margin: 4px 0 0 0;
+                    padding-left: 20px;
+                    color: var(--vscode-terminal-ansiRed);
                 }
                 
                 /* Tab styles */
@@ -1516,6 +1726,14 @@ class AIMonitorPanel {
                                 vscode.postMessage({ command: 'runTest' });
                             });
                         }
+                        
+                        // Setup test view buttons in the TDD table
+                        document.querySelectorAll('.tdd-action-button').forEach(function(btn) {
+                            btn.addEventListener('click', function() {
+                                const index = parseInt(btn.getAttribute('data-index'));
+                                vscode.postMessage({ command: 'showTddDetails', iterationIndex: index });
+                            });
+                        });
                     }
                     
                     // Call setup function after DOM is fully loaded

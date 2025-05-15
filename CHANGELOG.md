@@ -2,6 +2,36 @@
 
 All notable changes to the Python components of the AI Development Monitor will be documented in this file.
 
+## [0.6.0] - 2025-05-14
+
+### Added
+
+- Enhanced test execution capabilities for GitHub Copilot Chat integration
+- Added JSON input/output format support to run_test_execution.py
+- Added automatic test template generation for Copilot suggestions
+- Improved error handling in test execution utilities
+
+### Changed
+
+- Updated run_test_execution.py to support programmatic use via JSON
+- Improved test execution result formatting for display in VS Code
+
+## [0.5.0] - 2025-05-13Development Monitor - Python Components Changelog
+
+All notable changes to the Python components of the AI Development Monitor will be documented in this file.
+
+## [0.6.0] - 2025-05-14
+
+### Added
+- Enhanced test execution capabilities for GitHub Copilot Chat integration
+- Added JSON input/output format support to run_test_execution.py
+- Added automatic test template generation for Copilot suggestions
+- Improved error handling in test execution utilities
+
+### Changed
+- Updated run_test_execution.py to support programmatic use via JSON
+- Improved test execution result formatting for display in VS Code
+
 ## [0.5.0] - 2025-05-13
 
 ### Added

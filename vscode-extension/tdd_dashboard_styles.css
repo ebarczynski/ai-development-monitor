@@ -1,0 +1,184 @@
+/**
+ * CSS styles for the TDD Dashboard
+ * Add these styles to the webview panel CSS
+ */
+
+/* Execution status tooltip */
+.tooltip {
+  position: relative;
+  display: inline-block;
+  cursor: help;
+}
+
+.tooltip .tooltiptext {
+  visibility: hidden;
+  width: 300px;
+  background-color: #333;
+  color: #fff;
+  text-align: left;
+  border-radius: 6px;
+  padding: 8px;
+  position: absolute;
+  z-index: 1;
+  bottom: 125%;
+  left: 50%;
+  margin-left: -150px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+  white-space: pre-wrap;
+}
+
+.tooltip:hover .tooltiptext {
+  visibility: visible;
+  opacity: 1;
+}
+
+.error-tooltip {
+  border-left: 4px solid var(--vscode-editorError-foreground);
+}
+
+/* Execution status styles */
+.success {
+  color: var(--vscode-terminal-ansiGreen);
+}
+
+.error {
+  color: var(--vscode-terminal-ansiRed);
+}
+
+.warning {
+  color: var(--vscode-terminal-ansiYellow);
+}
+
+/* TDD Dashboard additional styling */
+.tdd-stat-box {
+  background-color: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  padding: 10px 16px;
+  margin: 4px;
+  flex: 1;
+  min-width: 80px;
+  text-align: center;
+}
+
+/* Added execution time display */
+.execution-time {
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+  margin-left: 6px;
+}
+
+/* Improved test results table */
+.tdd-results-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 16px;
+}
+
+.tdd-results-table th, 
+.tdd-results-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.tdd-results-table th {
+  background-color: var(--vscode-editor-background);
+  font-weight: bold;
+}
+
+.tdd-results-table tr:hover {
+  background-color: var(--vscode-list-hoverBackground);
+}
+
+/* Test execution summary section */
+.tdd-execution-summary {
+  margin-top: 20px;
+  padding: 16px;
+  background-color: var(--vscode-editor-background);
+  border-radius: 4px;
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.tdd-execution-summary h4 {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.tdd-execution-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.tdd-execution-label {
+  font-weight: bold;
+  min-width: 120px;
+}
+
+/* GitHub Copilot test execution styling */
+.github-copilot-result {
+  background-color: rgba(35, 134, 54, 0.1);
+  border-left: 4px solid #238636;
+}
+
+.tdd-execution-bar {
+  margin-top: 6px;
+  margin-bottom: 6px;
+}
+
+.tdd-exec-metrics {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.tdd-exec-bar {
+  height: 4px;
+  background-color: var(--vscode-input-background);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.tdd-exec-success {
+  height: 100%;
+  background-color: var(--vscode-terminal-ansiGreen);
+}
+
+.tdd-exec-errors {
+  margin-top: 8px;
+  font-size: 0.85em;
+}
+
+.tdd-error-list {
+  margin: 4px 0 0 0;
+  padding-left: 20px;
+  color: var(--vscode-terminal-ansiRed);
+}
+
+/* Special styling for iteration 0 (GitHub Copilot) */
+.tdd-iteration[data-source="github-copilot-chat"] {
+  border-color: #238636;
+  border-width: 2px;
+  background-color: rgba(35, 134, 54, 0.05);
+}
+
+.tdd-results-table tr[data-source="github-copilot-chat"] {
+  background-color: rgba(35, 134, 54, 0.05);
+}
+
+.tdd-results-table tr[data-source="github-copilot-chat"] td:first-child::before {
+  content: "GH";
+  display: inline-block;
+  background-color: #238636;
+  color: white;
+  border-radius: 3px;
+  padding: 1px 3px;
+  font-size: 0.8em;
+  margin-right: 4px;
+}

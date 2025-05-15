@@ -7,8 +7,10 @@
 const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const Logger = require('./logger');
 const contextManager = require('./context_manager');
+const { execSync } = require('child_process');
 
 class CopilotChatIntegration {
     constructor() {
@@ -24,12 +26,18 @@ class CopilotChatIntegration {
         this.suggestionCache = new Set(); // Cache to track processed suggestions
         this.suggestionCacheTimeout = 5000; // Time in ms to keep suggestions in cache
         this.autoCaptureChatHistory = vscode.workspace.getConfiguration('aiDevelopmentMonitor').get('autoCaptureChatHistory', true);
+        this.autoRunTestsOnSuggestions = vscode.workspace.getConfiguration('aiDevelopmentMonitor').get('autoRunTestsOnSuggestions', true);
         
         // Listen for configuration changes
         this.configChangeListener = vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration('aiDevelopmentMonitor.autoCaptureChatHistory')) {
                 this.autoCaptureChatHistory = vscode.workspace.getConfiguration('aiDevelopmentMonitor').get('autoCaptureChatHistory', true);
                 Logger.info(`Auto-capture chat history setting changed to: ${this.autoCaptureChatHistory}`, 'copilot-chat');
+            }
+            
+            if (e.affectsConfiguration('aiDevelopmentMonitor.autoRunTestsOnSuggestions')) {
+                this.autoRunTestsOnSuggestions = vscode.workspace.getConfiguration('aiDevelopmentMonitor').get('autoRunTestsOnSuggestions', true);
+                Logger.info(`Auto-run tests on suggestions setting changed to: ${this.autoRunTestsOnSuggestions}`, 'copilot-chat');
             }
         });
         
@@ -427,6 +435,67 @@ class CopilotChatIntegration {
                 if (this.autoCaptureChatHistory) {
                     this.debouncedExtractContext(true);
                     Logger.debug('Auto-capturing chat history enabled, extracting context', 'copilot-chat');
+                    
+                    // Execute tests on code blocks if enabled and the message is from the assistant
+                    if (this.autoRunTestsOnSuggestions && !message.isUser && codeBlocks.length > 0) {
+                        // Get the current task context
+                        const currentContext = contextManager.getContext();
+                        const taskDescription = currentContext?.task?.description || '';
+                        
+                        // Run tests on each code block
+                        codeBlocks.forEach(async (codeBlock, index) => {
+                            if (codeBlock.language && codeBlock.content && codeBlock.content.length > 10) {
+                                try {
+                                    Logger.info(`Running tests on code suggestion #${index+1}`, 'copilot-chat');
+                                    
+                                    // Execute tests on this suggestion
+                                    const testResults = await this.runTestsOnSuggestion(codeBlock, codeBlock.language, taskDescription);
+                                    
+                                    // Update TDD dashboard with execution results if available
+                                    if (testResults) {
+                                        // Use extension module to update TDD dashboard
+                                        const { TDDExtension } = require('./tdd_extension');
+                                        TDDExtension.updateTDDDashboard(
+                                            {
+                                                total: testResults.total_tests || 0,
+                                                passed: testResults.passed_tests || 0,
+                                                failed: testResults.failed_tests || 0,
+                                                success: testResults.success || false,
+                                                output: testResults.output || ''
+                                            },
+                                            testResults.test_code || '',
+                                            codeBlock.content,
+                                            1, // Start with iteration 1 for Copilot suggestions
+                                            codeBlock.language,
+                                            testResults
+                                        );
+                                        
+                                        // Also send to AI Monitor Panel for display in the TDD Dashboard
+                                        const AIMonitorPanel = require('./ai_monitor_panel');
+                                        if (AIMonitorPanel.currentPanel) {
+                                            // Create a GitHub Copilot specific evaluation object
+                                            const copilotEvaluation = {
+                                                github_copilot_execution: {
+                                                    ...testResults,
+                                                    implementation_code: codeBlock.content,
+                                                    language: codeBlock.language,
+                                                    source: 'github-copilot-chat',
+                                                    timestamp: new Date().toISOString()
+                                                }
+                                            };
+                                            
+                                            // Update the panel with the test execution results
+                                            AIMonitorPanel.currentPanel.setEvaluationResults(copilotEvaluation);
+                                            
+                                            Logger.info(`Displayed GitHub Copilot test execution results in TDD Dashboard: ${testResults.passed_tests}/${testResults.total_tests} tests passed`, 'copilot-chat');
+                                        }
+                                    }
+                                } catch (testError) {
+                                    Logger.error(`Error executing tests on suggestion: ${testError.message}`, 'copilot-chat');
+                                }
+                            }
+                        });
+                    }
                 } else {
                     Logger.debug('Auto-capturing chat history disabled, skipping extraction', 'copilot-chat');
                 }
@@ -1278,6 +1347,93 @@ class CopilotChatIntegration {
             message += " " + feedback;
         }
         return await this.sendMessageToChat(message, showNotification);
+    }
+
+    /**
+     * Execute tests on a code suggestion from Copilot Chat
+     * 
+     * @param {Object} codeBlock The code block from Copilot Chat containing the suggestion
+     * @param {string} language The detected language of the code
+     * @param {string} taskDescription The description of the task being solved
+     * @returns {Promise<Object|null>} The test execution results or null if tests couldn't be run
+     */
+    async runTestsOnSuggestion(codeBlock, language, taskDescription = '') {
+        if (!this.autoRunTestsOnSuggestions || !codeBlock || !codeBlock.content) {
+            return null;
+        }
+        
+        try {
+            Logger.info(`Running tests on Copilot suggestion (${language})`, 'copilot-chat');
+            
+            // Prepare the test execution request
+            const testExecutionRequest = {
+                implementation_code: codeBlock.content,
+                language: language || codeBlock.language || 'javascript',
+                task_description: taskDescription,
+                iteration: 1, // Start with iteration 1 for Copilot suggestions
+            };
+            
+            // Get existing test code if any is found in the context
+            const existingContext = contextManager.getContext();
+            if (existingContext && existingContext.tdd && existingContext.tdd.testCode) {
+                testExecutionRequest.test_code = existingContext.tdd.testCode;
+            } else {
+                // Generate a basic test template using the task description
+                testExecutionRequest.generate_test = true;
+            }
+            
+            // Call the test execution endpoint in Python backend
+            const tempFile = path.join(os.tmpdir(), `copilot-test-${Date.now()}.json`);
+            
+            // Write the request to a temp file
+            fs.writeFileSync(tempFile, JSON.stringify(testExecutionRequest, null, 2));
+            
+            // Call the Python script to execute tests
+            const pythonInterpreter = this.getPythonInterpreter();
+            const agentDir = contextManager.getAgentDirectory();
+            const scriptPath = path.join(agentDir, 'examples', 'run_test_execution.py');
+            
+            const command = `"${pythonInterpreter}" "${scriptPath}" "${tempFile}"`;
+            Logger.debug(`Executing command: ${command}`, 'copilot-chat');
+            
+            // Execute the test script
+            const output = execSync(command, { encoding: 'utf-8' });
+            
+            // Parse the results
+            let testExecution = null;
+            try {
+                const results = JSON.parse(output);
+                testExecution = results;
+                Logger.info(`Tests completed: ${results.passed_tests}/${results.total_tests} passed`, 'copilot-chat');
+            } catch (parseError) {
+                Logger.error(`Error parsing test execution results: ${parseError}`, 'copilot-chat');
+                return null;
+            }
+            
+            // Clean up temp file
+            try { fs.unlinkSync(tempFile); } catch (e) { /* ignore */ }
+            
+            return testExecution;
+            
+        } catch (error) {
+            Logger.error(`Error running tests on suggestion: ${error.message}`, 'copilot-chat');
+            return null;
+        }
+    }
+    
+    /**
+     * Get Python interpreter path
+     * @returns {string} Path to Python interpreter
+     */
+    getPythonInterpreter() {
+        // Try to get Python path from configuration
+        const pythonPath = vscode.workspace.getConfiguration('python').get('defaultInterpreterPath');
+        if (pythonPath && fs.existsSync(pythonPath)) {
+            return pythonPath;
+        }
+        
+        // Fallback to system Python
+        return process.platform === 'win32' ? 'python.exe' : 'python3';
     }
 }
 

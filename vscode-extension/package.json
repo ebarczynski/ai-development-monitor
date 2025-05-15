@@ -2,7 +2,7 @@
   "name": "ai-development-monitor",
   "displayName": "AI Development Monitor",
   "description": "Monitor and evaluate GitHub Copilot suggestions",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "publisher": "local-publisher",
   "license": "MIT",
   "repository": {
@@ -95,6 +95,11 @@
           "default": true,
           "description": "Automatically evaluate code suggestions from Copilot Chat"
         },
+        "aiDevelopmentMonitor.autoRunTestsOnSuggestions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically run tests on code suggestions from GitHub Copilot Chat"
+        },
         "aiDevelopmentMonitor.notificationLevel": {
           "type": "string",
           "enum": [
@@ -144,6 +149,16 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically run tests when code changes"
+        },
+        "aiDevelopmentMonitor.tdd.showExecutionResults": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show test execution results in the TDD Dashboard"
+        },
+        "aiDevelopmentMonitor.tdd.includeGithubCopilotResults": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include GitHub Copilot Chat suggestion test results in the TDD Dashboard"
         },
         "aiDevelopmentMonitor.tdd.showInlineCoverage": {
           "type": "boolean",

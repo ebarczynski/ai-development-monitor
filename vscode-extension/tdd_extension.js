@@ -25,144 +25,127 @@ const AIMonitorPanel = require('./ai_monitor_panel');
  * @param {string} originalCode - The original code before changes
  */
 async function runTDDCycle(outputChannel, webSocketConnection, conversationId, suggestionCode, language, iterations, callback, taskDescription = "", originalCode = "") {
-    // Get TDD configuration settings
-    const config = vscode.workspace.getConfiguration('aiDevelopmentMonitor.tdd');
-    const defaultIterations = config.get('defaultIterations', 5);
-    const testFramework = config.get('testFramework', 'auto');
+    outputChannel.appendLine(`Running TDD cycle for ${language} code with ${iterations} iterations...`);
     
-    // Use provided iterations or the default from settings
-    iterations = iterations || defaultIterations;
+    const filePath = await createTemporaryFile(suggestionCode, language);
+    outputChannel.appendLine(`Created temporary file: ${filePath}`);
     
-    outputChannel.appendLine('\n=== Test-Driven Development Cycle ===');
-    outputChannel.appendLine(`Language: ${language}`);
-    outputChannel.appendLine(`Test Framework: ${testFramework !== 'auto' ? testFramework : 'Auto-detected'}`);
-    if (taskDescription) {
-        outputChannel.appendLine(`Task Description: ${taskDescription}`);
-    }
-    outputChannel.appendLine(`Running ${iterations} TDD iterations using MCP Server`);
-    outputChannel.appendLine('');
-
-    // Create a temporary file to work with the code
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders) {
-        outputChannel.appendLine('❌ No workspace folder found for TDD testing');
-        if (callback) callback();
-        return;
-    }
-
-    const fileName = `tdd_test_${Date.now()}.${language === 'python' ? 'py' : language}`;
-    const filePath = path.join(workspaceFolders[0].uri.fsPath, fileName);
+    // Keep track of all tests across iterations
+    const allTests = [];
     
-    try {
-        // Write the initial code to the file
-        fs.writeFileSync(filePath, suggestionCode);
-        outputChannel.appendLine(`📄 Created test file: ${filePath}`);
-        
-        // Open the file in the editor
-        const document = await vscode.workspace.openTextDocument(filePath);
-        const editor = await vscode.window.showTextDocument(document);
-        
-        // Track test results and iterations
-        let currentCode = suggestionCode;
-        let allTests = [];
-        let currentIteration = 1;
-        
-        // Set up message handler for TDD responses
-        const messageHandler = async (data) => {
-            try {
-                const response = JSON.parse(data);
+    // Create a message handler for TDD responses
+    const messageHandler = async (rawData) => {
+        try {
+            const data = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
+            
+            // Check if it's a TDD message
+            if (data.message_type === "tdd_tests") {
+                const tddResponse = data.content;
                 
-                // Check if this is a TDD-related message
-                if (response.context && response.context.metadata && 
-                    response.context.metadata.tdd_iteration !== undefined) {
+                // Extract test code and metadata
+                const testCode = tddResponse.test_code;
+                const iteration = tddResponse.iteration || 1;
+                
+                // Check for errors
+                if (tddResponse.error) {
+                    outputChannel.appendLine(`\n❌ Error in TDD iteration ${iteration}: ${tddResponse.error}`);
                     
-                    const iteration = response.context.metadata.tdd_iteration;
-                    outputChannel.appendLine(`\nReceived TDD response for iteration ${iteration}`);
-                    
-                    if (response.message_type === 'tdd_tests') {
-                        // Extract test code from response
-                        const testCode = response.content.test_code || '';
-                        outputChannel.appendLine('Generated test code:');
-                        outputChannel.appendLine('```');
-                        outputChannel.appendLine(testCode.substring(0, 500) + (testCode.length > 500 ? '...' : ''));
-                        outputChannel.appendLine('```');
+                    // Try to continue with next iteration if possible
+                    if (iteration < iterations) {
+                        sendTDDRequest(
+                            webSocketConnection, 
+                            conversationId, 
+                            suggestionCode, 
+                            language, 
+                            iteration + 1, 
+                            outputChannel,
+                            taskDescription,
+                            originalCode
+                        );
+                    } else {
+                        outputChannel.appendLine('\n=== TDD Cycle Complete ===');
+                        outputChannel.appendLine(`✅ Completed ${iterations} iterations of TDD`);
+                        outputChannel.appendLine('Final test suite:');
+                        outputChannel.appendLine(`- Total test cases: ${allTests.length}`);
                         
-                        // Process test results
-                        processTestResults(testCode, currentCode, iteration, outputChannel, allTests, filePath);
+                        const testCategories = allTests.reduce((acc, test) => {
+                            const category = test.category || 'Other';
+                            acc[category] = (acc[category] || 0) + 1;
+                            return acc;
+                        }, {});
                         
-                        // Improve code for next iteration
-                        if (iteration < iterations) {
-                            currentCode = improveCodeForIteration(currentCode, language, iteration);
-                            
-                            // Update the editor with the improved code
-                            await editor.edit(editBuilder => {
-                                const lastLine = document.lineCount;
-                                const lastChar = document.lineAt(lastLine - 1).text.length;
-                                editBuilder.replace(
-                                    new vscode.Range(0, 0, lastLine, lastChar),
-                                    currentCode
-                                );
-                            });
-                            
-                            // Send next TDD request
-                            setTimeout(() => {
-                                sendTDDRequest(webSocketConnection, conversationId, currentCode, language, iteration + 1, outputChannel);
-                            }, 60000);
-                        } else {
-                            // Final summary
-                            outputChannel.appendLine('\n=== TDD Cycle Complete ===');
-                            outputChannel.appendLine(`✅ Completed ${iterations} iterations of TDD`);
-                            outputChannel.appendLine('Final test suite:');
-                            outputChannel.appendLine(`- Total test cases: ${allTests.length}`);
-                            
-                            const testCategories = allTests.reduce((acc, test) => {
-                                const category = test.category || 'Other';
-                                acc[category] = (acc[category] || 0) + 1;
-                                return acc;
-                            }, {});
-                            
-                            for (const [category, count] of Object.entries(testCategories)) {
-                                outputChannel.appendLine(`- ${category}: ${count} tests`);
+                        for (const [category, count] of Object.entries(testCategories)) {
+                            outputChannel.appendLine(`- ${category}: ${count} tests`);
+                        }
+                        
+                        // Cleanup after 10 seconds
+                        setTimeout(() => {
+                            try {
+                                if (fs.existsSync(filePath)) {
+                                    fs.unlinkSync(filePath);
+                                    outputChannel.appendLine('✅ TDD test file cleaned up');
+                                }
+                            } catch (error) {
+                                outputChannel.appendLine(`❌ Error cleaning up TDD test file: ${error}`);
                             }
                             
-                            // Cleanup after 10 seconds
-                            setTimeout(() => {
-                                try {
-                                    if (fs.existsSync(filePath)) {
-                                        fs.unlinkSync(filePath);
-                                        outputChannel.appendLine('✅ TDD test file cleaned up');
-                                    }
-                                } catch (error) {
-                                    outputChannel.appendLine(`❌ Error cleaning up TDD test file: ${error}`);
-                                }
-                                
-                                if (callback) callback();
-                            }, 10000);
-                        }
+                            if (callback) callback();
+                        }, 10000);
+                    }
+                    
+                    return;
+                }
+                
+                // Process the test code for this iteration
+                outputChannel.appendLine(`\n=== TDD Iteration ${iteration}/${iterations} ===`);
+                outputChannel.appendLine(`Generated ${testCode.split('\n').length} lines of test code`);
+                
+                // Get test execution results if they exist in the response
+                const testExecution = tddResponse.test_execution;
+                if (testExecution) {
+                    outputChannel.appendLine(`\nTest Execution Results:`);
+                    outputChannel.appendLine(`- Total tests: ${testExecution.total_tests}`);
+                    outputChannel.appendLine(`- Passed: ${testExecution.passed_tests}`);
+                    outputChannel.appendLine(`- Failed: ${testExecution.failed_tests}`);
+                    outputChannel.appendLine(`- Success: ${testExecution.success ? 'Yes' : 'No'}`);
+                    
+                    if (testExecution.errors && testExecution.errors.length > 0) {
+                        outputChannel.appendLine(`\nErrors:`);
+                        testExecution.errors.forEach(error => {
+                            outputChannel.appendLine(`- ${error}`);
+                        });
                     }
                 }
-            } catch (error) {
-                outputChannel.appendLine(`❌ Error processing TDD response: ${error.message}`);
+                
+                // Simulate test run (or use real test execution results from the server)
+                const testResults = testExecution ? {
+                    passed: testExecution.passed_tests,
+                    failed: testExecution.failed_tests,
+                    total: testExecution.total_tests,
+                    success: testExecution.success,
+                    output: testExecution.output || ""
+                } : simulateTestRun(testCode, suggestionCode, iteration);
+                
+                // Process the test results
+                processTestResults(testCode, suggestionCode, iteration, outputChannel, allTests, filePath, testExecution);
             }
-        };
-        
-        // Register temporary handler
-        const originalMessageHandler = webSocketConnection.onmessage;
-        webSocketConnection.onmessage = (event) => {
-            // Let the message be handled by both handlers
-            if (originalMessageHandler) {
-                originalMessageHandler(event);
-            }
-            messageHandler(event.data);
-        };
-        
-        // Start first iteration
-        sendTDDRequest(webSocketConnection, conversationId, currentCode, language, currentIteration, outputChannel);
-        
-    } catch (error) {
-        outputChannel.appendLine(`❌ Error in TDD cycle: ${error.message}`);
-        if (callback) callback();
-    }
+        } catch (error) {
+            outputChannel.appendLine(`❌ Error processing TDD response: ${error.message}`);
+        }
+    };
+    
+    // Register temporary handler
+    const originalMessageHandler = webSocketConnection.onmessage;
+    webSocketConnection.onmessage = (event) => {
+        // Let the message be handled by both handlers
+        if (originalMessageHandler) {
+            originalMessageHandler(event);
+        }
+        messageHandler(event.data);
+    };
+    
+    // Start first iteration
+    sendTDDRequest(webSocketConnection, conversationId, suggestionCode, language, 1, outputChannel, taskDescription, originalCode);
 }
 
 /**
@@ -323,27 +306,37 @@ function getTDDPurposeForIteration(iteration) {
 /**
  * Process test results from a test response
  */
-function processTestResults(testCode, implementation, iteration, outputChannel, allTests, testFilePath = null) {
-    // For diagnostic test, we simulate running tests
-    const results = simulateTestRun(testCode, implementation, iteration);
+function processTestResults(testCode, implementation, iteration, outputChannel, allTests, testFilePath = null, testExecution = null) {
+    // Try to extract test cases
+    const testCases = extractTestCases(testCode, iteration);
     
-    outputChannel.appendLine(`\nTest Results (Iteration ${iteration}):`);
-    outputChannel.appendLine(`- Total tests: ${results.total}`);
-    outputChannel.appendLine(`- Passing: ${results.passed}`);
-    outputChannel.appendLine(`- Failing: ${results.failed}`);
-    outputChannel.appendLine(results.output);
+    // Add each test case to the full list
+    testCases.forEach(testCase => {
+        testCase.iteration = iteration;
+        allTests.push(testCase);
+    });
     
-    // Extract test cases from the test code (simplified)
-    // In reality, this would parse the test code to identify individual test cases
-    const extractedTests = extractTestCases(testCode, iteration);
-    
-    // Add to all tests
-    allTests.push(...extractedTests);
-    
-    // Store the test file path for later reference
+    // Create a file with the test code if we have a valid file path
     if (testFilePath) {
-        outputChannel.appendLine(`Test file path: ${testFilePath}`);
+        try {
+            fs.writeFileSync(testFilePath, testCode);
+            outputChannel.appendLine(`Created test file: ${testFilePath}`);
+        } catch (error) {
+            outputChannel.appendLine(`Error creating test file: ${error}`);
+        }
     }
+    
+    // Run the tests (or use the provided execution results)
+    const results = testExecution ? {
+        passed: testExecution.passed_tests,
+        failed: testExecution.failed_tests,
+        total: testExecution.total_tests,
+        success: testExecution.success,
+        output: testExecution.output || generateMockTestOutput(testExecution.passed_tests, testExecution.failed_tests, iteration)
+    } : simulateTestRun(testCode, implementation, iteration);
+    
+    outputChannel.appendLine(`\nTest Results: ${results.passed}/${results.total} passed`);
+    outputChannel.appendLine(results.output);
     
     // Suggest improvements based on test results
     if (results.failed > 0) {
@@ -353,7 +346,7 @@ function processTestResults(testCode, implementation, iteration, outputChannel, 
     }
 
     // Update the AIMonitorPanel with the test results
-    updateTDDDashboard(results, testCode, implementation, iteration, 'javascript');
+    updateTDDDashboard(results, testCode, implementation, iteration, 'javascript', testExecution);
 }
 
 /**
@@ -592,8 +585,9 @@ const factorial = (function() {
  * @param {string} implementation - The implementation code
  * @param {number} iteration - Current iteration number
  * @param {string} language - Programming language of the code
+ * @param {Object} testExecution - Optional test execution results from the backend
  */
-function updateTDDDashboard(testResults, testCode, implementation, iteration, language) {
+function updateTDDDashboard(testResults, testCode, implementation, iteration, language, testExecution = null) {
     try {
         // Check if we have an active AIMonitorPanel instance
         if (!AIMonitorPanel.currentPanel) {
@@ -630,6 +624,30 @@ function updateTDDDashboard(testResults, testCode, implementation, iteration, la
             testFilePath = vscode.Uri.joinPath(workspaceFolders[0].uri, fileName).fsPath;
         }
         
+        // Prepare execution results if available
+        let executionResults = null;
+        if (testExecution) {
+            executionResults = {
+                success: testExecution.success,
+                total: testExecution.total_tests,
+                passed: testExecution.passed_tests,
+                failed: testExecution.failed_tests,
+                execution_time: testExecution.execution_time,
+                errors: testExecution.errors || []
+            };
+            
+            // If we have actual execution results, use those instead of simulated ones
+            if (executionResults.total > 0) {
+                testResults = {
+                    total: executionResults.total,
+                    passed: executionResults.passed,
+                    failed: executionResults.failed,
+                    success: executionResults.success,
+                    output: testExecution.output || testResults.output
+                };
+            }
+        }
+        
         // Create a TDD result object structured like the expected format
         const tddResult = {
             iteration: iteration,
@@ -643,6 +661,7 @@ function updateTDDDashboard(testResults, testCode, implementation, iteration, la
                 failed: testResults.failed,
                 success: testResults.success
             },
+            execution: executionResults, // Add execution results if available
             coverage: mockCoverage
         };
         
@@ -699,6 +718,8 @@ function updateTDDDashboard(testResults, testCode, implementation, iteration, la
     }
 }
 
-module.exports = {
+// Expose the TDD Extension functionality for other modules
+exports.TDDExtension = {
+    updateTDDDashboard,
     runTDDCycle
 };
