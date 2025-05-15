@@ -118,7 +118,7 @@ class TestQualityMetrics:
             "javascript": [r"function\s+", r"const\s+", r"let\s+", r"var\s+", r"=>\s*{", r"jest", r"mocha"],
             "typescript": [r"interface\s+", r"class\s+", r"type\s+", r":\s*\w+", r"<\w+>"],
             "java": [r"public\s+class", r"private\s+\w+", r"protected\s+\w+", r"@Test", r"JUnit", r"TestNG"],
-            "cpp": [r"#include", r"::\s*\w+", r"std::", r"template\s*<", r"namespace", r"gtest"],
+            "cpp": [r"#include", r"::\s*\w+", r"std::", r"template\s*<", r"namespace", r"gtest", r"expected<", r"std::format", r"std::print", r"auto\s*\(\s*\w+\s*\)", r"if\s+consteval"],
             "csharp": [r"namespace\s+", r"using\s+\w+;", r"public\s+(?:class|void)", r"NUnit", r"xUnit"],
             "rust": [r"fn\s+\w+", r"let\s+mut", r"impl\s+", r"pub\s+", r"struct\s+", r"enum\s+", r"mod\s+", r"#\[test\]"],
             "bash": [r"\[\[", r"\$\(", r"\$\{", r"function\s+\w+\s*\(\)", r"echo", r"#!/"],

@@ -41,7 +41,8 @@ def get_language_specific_template(language: str, iteration: int, code: str, tas
         "javascript": get_javascript_template,
         "typescript": get_typescript_template,
         "java": get_java_template,
-        "csharp": get_csharp_template
+        "csharp": get_csharp_template,
+        "cpp": get_cpp_template
     }
     
     handler = language_handlers.get(language, get_generic_template)
@@ -426,6 +427,211 @@ For the final iteration, conduct a comprehensive C# test review:
 3. Check for appropriate error handling testing
 4. Ensure tests are maintainable and follow clean code principles
 5. Provide a final assessment on how well the implementation fulfills the task from a C# perspective
+"""
+    }
+    
+    return templates.get(iteration, templates[1])
+
+def get_cpp_template(iteration: int, code: str, task_description: str) -> str:
+    """
+    Get a C++ test template with C++23 support
+    
+    Args:
+        iteration: The current TDD iteration (1-5)
+        code: The C++ code being tested
+        task_description: Description of what the code should do
+        
+    Returns:
+        String containing C++-specific test generation instructions with C++23 support
+    """
+    templates = {
+        1: """
+For this first iteration of C++ tests, create basic tests that:
+1. Use Google Test framework (gtest)
+2. Include necessary C++ headers (gtest/gtest.h, gmock/gmock.h)
+3. Verify functionality with basic inputs and edge cases
+4. Demonstrate proper use of modern C++23 features when appropriate, such as:
+   - `std::expected` for error handling
+   - `std::print` for formatted output
+   - `std::format` for string formatting
+   - `std::ranges` for container operations
+   - C++23 modules if applicable
+   - `auto(x)` shorthand for lambdas
+   - `if consteval` compile-time conditions
+5. Structure the test file with appropriate namespace usage
+6. Include a main function that runs all tests
+
+Example test structure:
+```cpp
+#include <gtest/gtest.h>
+#include <gmock/gmock.h>
+#include <expected> // C++23
+#include <format>   // C++23
+#include <print>    // C++23
+
+// Include the code being tested
+// #include "your_code_header.h"
+
+TEST(YourClassTest, YourFunctionName) {
+  // Test case implementation
+  EXPECT_EQ(result, expected_value);
+}
+
+// Add additional test cases
+
+int main(int argc, char** argv) {
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}
+```
+""",
+        2: """
+For the second iteration of C++ tests, enhance your test suite to:
+1. Use test fixtures with TEST_F macro where appropriate
+2. Test handling of C++23 features such as:
+   - `std::expected<T, E>` return values
+   - `std::print` formatting variations
+   - String formatting with `std::format` including proper use of `std::formatter` specializations
+   - Modules imports/exports if applicable
+   - Using C++23 additions to `<algorithm>` and `<ranges>`
+   - `constexpr` templates and reflection improvements
+3. Add parameterized tests using `INSTANTIATE_TEST_SUITE_P`
+4. Include tests for overloaded operators and constructors
+5. Test RAII resource management
+6. Verify thread safety if applicable
+7. Consider using C++23's improved metaprogramming capabilities
+
+Example test fixture:
+```cpp
+class YourClassTest : public ::testing::Test {
+protected:
+  void SetUp() override {
+    // Setup code
+  }
+  
+  void TearDown() override {
+    // Cleanup code
+  }
+  
+  // Test object and other shared resources
+};
+
+TEST_F(YourClassTest, TestFeature) {
+  // Test implementation using fixture members
+}
+```
+""",
+        3: """
+For the third iteration of C++ tests, focus on error handling with C++23 features:
+1. Test `std::expected<T, E>` error paths thoroughly
+2. Verify exception handling using EXPECT_THROW, EXPECT_NO_THROW
+3. Test boundary conditions and edge cases using:
+   - C++23 extended `constexpr` support for complex compile-time computations
+   - `std::expected` for propagating errors
+   - C++23 pattern matching (if implemented by your compiler)
+4. Add stress tests for complex operations
+5. Test memory safety using address sanitizers where applicable
+6. Check for proper handling of C++23 spaceship operator (<=>) if used
+7. Test any coroutine functionality and async code paths
+
+Test error handling example:
+```cpp
+TEST(ErrorHandlingTest, ExpectedReturnValue) {
+  auto result = function_that_might_fail();
+  EXPECT_TRUE(result.has_value()); // For success case
+  
+  auto error_result = function_with_bad_input();
+  EXPECT_FALSE(error_result.has_value());
+  EXPECT_EQ(error_result.error(), ExpectedErrorCode);
+}
+```
+""",
+        4: """
+For the fourth iteration of C++ tests, add comprehensive test coverage:
+1. Use test coverage tools like gcov/lcov to identify untested code paths
+2. Add mock objects with GMock where appropriate
+3. Test C++23-specific container adaptors and algorithms
+4. Add performance tests using Google Benchmark if applicable
+5. Test your code with different compiler implementations (GCC, Clang, MSVC)
+6. Add tests for C++23 monadic operations (and_then, or_else, transform) on std::expected
+7. Test compile-time behavior with static_assert
+8. Test proper module imports/exports if using C++23 modules
+9. Test interoperability with C++20 concepts
+
+Mocking example:
+```cpp
+class MockDatabase : public Database {
+public:
+  MOCK_METHOD(std::expected<Record, DbError>, fetchRecord, (std::string_view id), (override));
+  MOCK_METHOD(std::expected<void, DbError>, saveRecord, (const Record& record), (override));
+};
+
+TEST(DatabaseClient, FetchesRecordCorrectly) {
+  MockDatabase db;
+  EXPECT_CALL(db, fetchRecord("test-id"))
+    .WillOnce(Return(std::expected<Record, DbError>{Record{"test-id", "data"}}));
+    
+  DatabaseClient client(&db);
+  auto result = client.getRecordData("test-id");
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(result->data, "data");
+}
+```
+""",
+        5: """
+For the final iteration of C++ tests, focus on robustness and C++23 integration:
+1. Test multi-threading with C++23 features:
+   - `std::expected` across threads
+   - `std::barrier` and `std::latch` for synchronization
+   - Thread-safety of your classes
+2. Test proper memory management:
+   - RAII principles
+   - Smart pointers
+   - Move semantics
+   - Proper destruction sequence
+3. Use static analysis tools to identify potential issues
+4. Add tests for C++23 module functionality including proper isolation
+5. Check performance impacts of C++23 feature usage
+6. Test string formatting using C++23's std::format and std::print
+7. Test proper usage of C++23 text encoding conversions if applicable
+8. Test proper implementation of C++23's spaceship operator (<=>) for complex types
+
+Test example with C++23 features:
+```cpp
+#include <gtest/gtest.h>
+#include <format>
+#include <print>
+#include <expected>
+#include <thread>
+#include <vector>
+#include <barrier>
+
+TEST(ThreadingTest, BarrierSynchronization) {
+  constexpr int thread_count = 4;
+  std::barrier sync_point(thread_count);
+  std::atomic<int> counter = 0;
+  std::vector<std::thread> threads;
+  
+  for (int i = 0; i < thread_count; i++) {
+    threads.emplace_back([&sync_point, &counter, i]() {
+      // Phase 1
+      std::print("Thread {} is preparing\n", i);
+      counter++;
+      
+      sync_point.arrive_and_wait(); // All threads wait here until everyone arrives
+      
+      // Phase 2
+      EXPECT_EQ(counter.load(), thread_count); // All threads should see the same counter value
+      
+      sync_point.arrive_and_wait(); // Wait again for test completion
+    });
+  }
+  
+  for (auto& t : threads) {
+    t.join();
+  }
+}
+```
 """
     }
     

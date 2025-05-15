@@ -10,6 +10,7 @@ from typing import Dict, List, Tuple, Any
 from src.task_relevance import assess_task_relevance
 from src.task_analyzer import analyze_task_for_testing
 from src.test_quality_metrics import evaluate_test_quality
+from src.test_execution import execute_tests, document_test_results, TestExecutionResult
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -45,6 +46,9 @@ def evaluate_tdd_results(tdd_tests: List[Dict[str, Any]], suggestion_code: str, 
     issues_detected = []
     recommendations = []
     max_iteration = 0
+    
+    # Track test execution results
+    test_execution_results = []
 
     def strip_comments_and_docstrings(code: str) -> str:
         # Remove Python and JS comments and docstrings for more accurate analysis
@@ -60,7 +64,7 @@ def evaluate_tdd_results(tdd_tests: List[Dict[str, Any]], suggestion_code: str, 
             (r'function\s+\w+|\(\)\s*=>\s*{', "javascript"),
             (r'import\s+{.*}\s+from|export\s+class', "typescript"),
             (r'public\s+class|private\s+\w+\s+\w+', "java"),
-            (r'#include|namespace\s+\w+|::', "cpp"),
+            (r'#include|namespace\s+\w+|::|std::|using\s+std::', "cpp"),
             (r'fn\s+\w+|impl\s+|let\s+mut', "rust"),
             (r'package\s+main|func\s+\w+', "go"),
             (r'using\s+\w+|namespace\s+\w+', "csharp")
@@ -72,6 +76,7 @@ def evaluate_tdd_results(tdd_tests: List[Dict[str, Any]], suggestion_code: str, 
     # Analyze test content for each iteration
     for test_result in tdd_tests:
         test_code = test_result.get("test_code", "")
+        implementation_code = test_result.get("implementation_code", suggestion_code)
         iteration = test_result.get("iteration", 0)
         max_iteration = max(max_iteration, iteration)
         code_no_comments = strip_comments_and_docstrings(test_code)
@@ -106,7 +111,52 @@ def evaluate_tdd_results(tdd_tests: List[Dict[str, Any]], suggestion_code: str, 
             
         # Use the max of test functions and asserts as proxy for number of tests
         test_count = max(test_func_count, assert_count)
-        total_tests += test_count
+        
+        # Execute the tests if we have both test code and implementation code
+        if test_code and implementation_code and detected_language:
+            try:
+                logger.info(f"Executing tests for iteration {iteration}")
+                execution_result = execute_tests(
+                    test_code, 
+                    implementation_code, 
+                    detected_language, 
+                    iteration,
+                    task_description
+                )
+                
+                # Document the test results
+                test_doc = document_test_results(
+                    execution_result,
+                    iteration,
+                    detected_language,
+                    task_description
+                )
+                
+                # Store the execution result for reporting
+                test_execution_results.append(test_doc)
+                
+                # Update counters based on actual execution results
+                if execution_result.total_tests > 0:
+                    test_count = execution_result.total_tests
+                    total_tests += test_count
+                    passed_tests += execution_result.passed_tests
+                    
+                    # Add any execution errors to issues
+                    if execution_result.errors:
+                        for error in execution_result.errors[:3]:  # Limit to 3 errors
+                            issues_detected.append(f"Test error in iteration {iteration}: {error}")
+                            
+                    # Check success status
+                    if not execution_result.success and execution_result.failed_tests > 0:
+                        issues_detected.append(f"Failed {execution_result.failed_tests} tests in iteration {iteration}")
+            except Exception as e:
+                logger.error(f"Error executing tests: {e}")
+                issues_detected.append(f"Error executing tests in iteration {iteration}: {str(e)}")
+                # Still analyze the test code statically
+                total_tests += test_count
+        else:
+            # Fallback to static analysis if tests can't be executed
+            total_tests += test_count
 
         # Detect clear pass/fail patterns across languages
         fail_patterns = [
@@ -252,10 +302,32 @@ def evaluate_tdd_results(tdd_tests: List[Dict[str, Any]], suggestion_code: str, 
         "metrics": {
             "test_count": total_tests,
             "passed_tests": passed_tests,
-            "quality_metrics": test_quality
-        }
+            "quality_metrics": test_quality,
+            "test_execution_results": test_execution_results
+        },
+        "test_execution_results": test_execution_results  # Add the test execution results
     }
     
+    # Calculate execution metrics if we have execution results
+    if test_execution_results:
+        execution_summary = {
+            "total_tests_executed": sum(doc.get("execution_result", {}).get("total_tests", 0) for doc in test_execution_results),
+            "total_passed": sum(doc.get("execution_result", {}).get("passed_tests", 0) for doc in test_execution_results),
+            "total_failed": sum(doc.get("execution_result", {}).get("failed_tests", 0) for doc in test_execution_results),
+            "success_rate": 0.0,
+            "iterations_with_failures": 0
+        }
+        
+        if execution_summary["total_tests_executed"] > 0:
+            execution_summary["success_rate"] = execution_summary["total_passed"] / execution_summary["total_tests_executed"]
+            
+        execution_summary["iterations_with_failures"] = sum(
+            1 for doc in test_execution_results 
+            if doc.get("execution_result", {}).get("failed_tests", 0) > 0
+        )
+        
+        result["execution_metrics"] = execution_summary
+
     # Include task analysis if available
     if task_analysis:
         result["task_analysis"] = {

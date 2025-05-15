@@ -41,6 +41,7 @@ def set_agent(agent_instance):
     logger.info("Agent instance set in TDD helpers")
 
 import asyncio
+import subprocess
 
 # Global lock for serializing LLM requests
 llm_request_lock = asyncio.Lock()
@@ -139,6 +140,50 @@ async def handle_tdd_request(message, websocket: WebSocket):
     }
     if not generated_tests:
         response_content["error"] = error_message if 'error_message' in locals() else "Unknown error: No tests generated."
+    
+    # Execute tests if we have generated code
+    if generated_tests:
+        try:
+            from src.test_execution import execute_tests, document_test_results
+            
+            logger.info(f"Executing tests for iteration {iteration}")
+            execution_result = execute_tests(
+                generated_tests,
+                code,  # The implementation code
+                language,
+                iteration,
+                task_description
+            )
+            
+            # Document test results
+            test_doc = document_test_results(
+                execution_result,
+                iteration,
+                language,
+                task_description
+            )
+            
+            # Add test results to the response
+            response_content["test_execution"] = {
+                "success": execution_result.success,
+                "total_tests": execution_result.total_tests,
+                "passed_tests": execution_result.passed_tests,
+                "failed_tests": execution_result.failed_tests,
+                "execution_time": execution_result.execution_time,
+                "errors": execution_result.errors
+            }
+            
+            # Log test execution
+            logger.info(f"Test execution results: {execution_result.passed_tests}/{execution_result.total_tests} tests passed")
+        except Exception as e:
+            logger.error(f"Error executing tests: {e}")
+            response_content["test_execution"] = {
+                "success": False,
+                "error": str(e),
+                "total_tests": 0,
+                "passed_tests": 0,
+                "failed_tests": 0
+            }
 
     response = {
         "message_type": "tdd_tests",

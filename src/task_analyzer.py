@@ -71,7 +71,7 @@ class TaskAnalyzer:
             "javascript": ["promise", "async/await", "closure", "prototype", "event loop"],
             "typescript": ["type", "interface", "generic", "union", "intersection", "enum"],
             "java": ["checked exception", "unchecked exception", "final", "abstract", "interface"],
-            "cpp": ["template", "raii", "move", "const", "pointer", "reference", "smart pointer"],
+            "cpp": ["template", "raii", "move", "const", "pointer", "reference", "smart pointer", "std::expected", "std::format", "std::print", "modules", "auto(x)", "if consteval", "spaceship operator"],
             "rust": ["ownership", "borrow", "lifetime", "trait", "enum", "pattern matching"],
             "csharp": ["linq", "delegate", "event", "property", "extension method"],
             "go": ["goroutine", "channel", "defer", "interface", "error handling"]
