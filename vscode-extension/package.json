@@ -2,9 +2,9 @@
   "name": "ai-development-monitor",
   "displayName": "AI Development Monitor",
   "description": "Monitor and evaluate GitHub Copilot suggestions",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publisher": "local-publisher",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/username/ai-development-monitor.git"
@@ -80,6 +80,10 @@
       {
         "command": "ai-development-monitor.showTddDashboard",
         "title": "AI Dev: Show TDD Dashboard"
+      },
+      {
+        "command": "ai-development-monitor.clearHuggingFaceCache",
+        "title": "AI Monitor: Clear Hugging Face API Cache"
       }
     ],
     "configuration": {
@@ -263,14 +267,55 @@
           "type": "number",
           "default": 2000,
           "description": "Interval in milliseconds for checking ghost text (higher values reduce CPU usage)"
+        },
+        "aiDevelopmentMonitor.modelProvider": {
+          "type": "string",
+          "enum": ["ollama", "huggingface"],
+          "default": "ollama",
+          "description": "The model provider to use for code evaluation and test generation",
+          "enumDescriptions": [
+            "Use local Ollama LLM (default)",
+            "Use Hugging Face API-hosted models"
+          ]
+        },
+        "aiDevelopmentMonitor.huggingFace.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for Hugging Face"
+        },
+        "aiDevelopmentMonitor.huggingFace.defaultModel": {
+          "type": "string",
+          "default": "microsoft/codebert-base",
+          "description": "Default model to use for Hugging Face API requests"
+        },
+        "aiDevelopmentMonitor.huggingFace.enableResponseCaching": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable caching of Hugging Face API responses to reduce token usage"
+        },
+        "aiDevelopmentMonitor.huggingFace.availableModels": {
+          "type": "array",
+          "default": [
+            "microsoft/codebert-base",
+            "codellama/CodeLlama-7b-hf",
+            "bigcode/starcoder",
+            "bigcode/santacoder",
+            "facebook/incoder-1B"
+          ],
+          "description": "List of available Hugging Face models for code evaluation and generation",
+          "items": {
+            "type": "string"
+          }
         }
       }
     }
   },
   "scripts": {
-    "package": "vsce package"
+    "package": "vsce package",
+    "install-deps": "./install_deps.sh"
   },
   "dependencies": {
-    "ws": "^8.18.1"
+    "ws": "^8.18.1",
+    "axios": "^1.6.2"
   }
 }

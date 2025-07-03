@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025 Edwin Barczyński
+
 /**
  * Optimized MCP Client for AI Development Monitor extension
  * 
@@ -9,6 +12,7 @@ const WebSocket = require('ws');
 const zlib = require('zlib');
 const Logger = require('./logger');
 const crypto = require('crypto');
+const modelProviderService = require('./model_provider_service');
 
 // Constants for optimization
 const COMPRESSION_THRESHOLD = 1024; // Only compress messages larger than 1KB
@@ -1170,8 +1174,38 @@ class OptimizedMCPClient {
             Logger.debug(`Using enhanced task description from ${this.enhancedContext.sourceType}`, 'mcp');
         }
         
-        // Send evaluation request
-        Logger.info('Sending suggestion evaluation request', 'mcp');
+        // Check if we should use Hugging Face API or another external provider
+        if (modelProviderService.shouldUseExternalProvider()) {
+            try {
+                Logger.info(`Using ${modelProviderService.getProviderInfo().type} for code evaluation`, 'mcp');
+                
+                // Create request for external provider
+                const requestData = {
+                    originalCode: suggestionData.original_code,
+                    proposedChanges: suggestionData.proposed_changes,
+                    language: suggestionData.language,
+                    taskDescription: suggestionData.task_description
+                };
+                
+                // Process request through model provider service
+                const externalResponse = await modelProviderService.processRequest(requestData, 'evaluation');
+                
+                // If we got a valid response from the external provider, return it
+                if (externalResponse) {
+                    Logger.info(`Received evaluation from ${modelProviderService.getProviderInfo().type}`, 'mcp');
+                    return externalResponse;
+                }
+                
+                // Otherwise, fall back to MCP/Ollama
+                Logger.info('Falling back to Ollama via MCP server for evaluation', 'mcp');
+            } catch (error) {
+                Logger.error('Error using external provider for evaluation, falling back to Ollama:', error, 'mcp');
+                // Continue with MCP/Ollama as fallback
+            }
+        }
+        
+        // Send evaluation request to MCP server (Ollama)
+        Logger.info('Sending suggestion evaluation request to MCP server', 'mcp');
         
         // Higher priority than regular messages
         const response = await this.sendMessage('suggestion', suggestionData, null, PRIORITY_LEVELS.MEDIUM);

@@ -2,6 +2,17 @@
 
 All notable changes to the "AI Development Monitor" extension will be documented in this file.
 
+## [0.7.0] - 2025-05-23
+
+- Add Hugging Face API integration as an alternative to local Ollama:
+  - Create model provider service for switching between LLM providers
+  - Add Hugging Face API client with error handling and response caching
+  - Add fallback mechanisms for reliability
+  - Add configuration options for API keys and model selection
+- Update Status Menu with model provider selection and configuration
+- Add command to clear Hugging Face API response cache
+- Update documentation for multiple LLM provider support
+
 ## [0.6.0] - 2025-05-14
 
 - Add GitHub Copilot test execution capabilities:

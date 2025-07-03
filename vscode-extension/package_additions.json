@@ -1,0 +1,59 @@
+/**
+ * Package.json additions for Hugging Face API integration
+ * 
+ * Add these configuration options to your package.json "contributes.configuration" section
+ */
+{
+  "contributes": {
+    "configuration": {
+      "title": "AI Development Monitor",
+      "properties": {
+        "aiDevelopmentMonitor.modelProvider": {
+          "type": "string",
+          "enum": ["ollama", "huggingface"],
+          "default": "ollama",
+          "description": "The model provider to use for code evaluation and test generation",
+          "enumDescriptions": [
+            "Use local Ollama LLM (default)",
+            "Use Hugging Face API-hosted models"
+          ]
+        },
+        "aiDevelopmentMonitor.huggingFace.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for Hugging Face"
+        },
+        "aiDevelopmentMonitor.huggingFace.defaultModel": {
+          "type": "string",
+          "default": "microsoft/codebert-base",
+          "description": "Default model to use for Hugging Face API requests"
+        },
+        "aiDevelopmentMonitor.huggingFace.enableResponseCaching": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable caching of Hugging Face API responses to reduce token usage"
+        },
+        "aiDevelopmentMonitor.huggingFace.availableModels": {
+          "type": "array",
+          "default": [
+            "microsoft/codebert-base",
+            "codellama/CodeLlama-7b-hf",
+            "bigcode/starcoder",
+            "bigcode/santacoder",
+            "facebook/incoder-1B"
+          ],
+          "description": "List of available Hugging Face models for code evaluation and generation",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "ai-development-monitor.clearHuggingFaceCache",
+        "title": "AI Monitor: Clear Hugging Face API Cache"
+      }
+    ]
+  }
+}

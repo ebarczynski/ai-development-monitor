@@ -130,6 +130,35 @@ async function activate(context) {
                     label: "$(dashboard) Open Dashboard",
                     command: 'ai-development-monitor.showPanel'
                 });
+                
+                // Add model provider section
+                items.push({ kind: vscode.QuickPickItemKind.Separator, label: 'Model Provider' });
+                
+                try {
+                    const modelProviderService = require('./model_provider_service');
+                    const providerInfo = modelProviderService.getProviderInfo();
+                    
+                    items.push({
+                        label: `$(github-action) Model Provider: ${providerInfo.type}`,
+                        detail: `Current model: ${providerInfo.model}`,
+                        buttons: [
+                            {
+                                iconPath: new vscode.ThemeIcon('gear'),
+                                tooltip: 'Change Model Provider Settings'
+                            }
+                        ]
+                    });
+                    
+                    // Hugging Face specific actions
+                    if (providerInfo.type === 'huggingface') {
+                        items.push({
+                            label: "$(clear-all) Clear Hugging Face API Cache",
+                            command: 'ai-development-monitor.clearHuggingFaceCache'
+                        });
+                    }
+                } catch (error) {
+                    Logger.error('Error getting model provider info:', error, 'model-provider');
+                }
             }
         } else {
             items.push({
@@ -148,7 +177,18 @@ async function activate(context) {
                 vscode.commands.executeCommand(item.command);
             }
         });
-    });
+    }, null, context.subscriptions);
+    
+    // Register handler for QuickPick buttons
+    vscode.window.onDidTriggerQuickPickButton(async (e) => {
+        if (e.tooltip === 'Change Model Provider Settings') {
+            // Open settings UI focused on the AI Development Monitor model provider settings
+            await vscode.commands.executeCommand(
+                'workbench.action.openSettings',
+                'aiDevelopmentMonitor.modelProvider'
+            );
+        }
+    }, null, context.subscriptions);
 
     // Register commands
     const enableCommand = vscode.commands.registerCommand('ai-development-monitor.enable', enableMonitor);
@@ -217,6 +257,27 @@ async function activate(context) {
         }
     });
     
+    // Add command to clear Hugging Face API cache
+    const clearHuggingFaceCacheCommand = vscode.commands.registerCommand('ai-development-monitor.clearHuggingFaceCache', () => {
+        try {
+            const modelProviderService = require('./model_provider_service');
+            const huggingFaceClient = modelProviderService.huggingFaceClient;
+            
+            if (huggingFaceClient) {
+                huggingFaceClient.clearCache();
+                vscode.window.showInformationMessage('Hugging Face API cache cleared successfully.');
+            } else {
+                vscode.window.showWarningMessage('Hugging Face API client not available or initialized.');
+            }
+        } catch (error) {
+            Logger.error('Error clearing Hugging Face cache:', error, 'huggingface');
+            vscode.window.showErrorMessage(`Failed to clear Hugging Face API cache: ${error.message}`);
+        }
+    });
+    
+    // Add the new command to context.subscriptions
+    context.subscriptions.push(clearHuggingFaceCacheCommand);
+
     // Helper function to describe WebSocket state
     function getSocketStateDescription(state) {
         if (state === 'no-socket') return 'No WebSocket';
