@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025 Edwin Barczyński
+
 /**
  * Suggestion Evaluator for AI Development Monitor
  * 

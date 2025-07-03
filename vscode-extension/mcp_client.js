@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025 Edwin Barczyński
+
 // MCP Client implementation for AI Development Monitor extension
 const vscode = require('vscode');
 const WebSocket = require('ws');

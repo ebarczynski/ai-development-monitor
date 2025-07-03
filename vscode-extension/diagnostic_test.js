@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025 Edwin Barczyński
+
 // Diagnostic Test for AI Development Monitor Extension
 // This file will help test if the extension can react to GitHub Copilot Chat 
 // messages and detect file changes in the editor

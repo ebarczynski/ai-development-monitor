@@ -2,6 +2,22 @@
 
 All notable changes to the Python components of the AI Development Monitor will be documented in this file.
 
+## [0.7.0] - 2025-05-23
+
+### Added
+
+- Added support for Hugging Face API integration as an alternative to local Ollama
+- Created model provider abstraction layer for multiple LLM support
+- Added configuration options for selecting between model providers
+- Implemented caching for API responses to reduce token usage
+- Added fallback mechanisms between different LLM providers
+
+### Changed
+
+- Updated MCP client to work with both local and cloud-based models
+- Enhanced error handling for API connectivity issues
+- Updated documentation to reflect multiple model provider support
+
 ## [0.6.0] - 2025-05-14
 
 ### Added
@@ -15,18 +31,6 @@ All notable changes to the Python components of the AI Development Monitor will 
 
 - Updated run_test_execution.py to support programmatic use via JSON
 - Improved test execution result formatting for display in VS Code
-
-## [0.5.0] - 2025-05-13Development Monitor - Python Components Changelog
-
-All notable changes to the Python components of the AI Development Monitor will be documented in this file.
-
-## [0.6.0] - 2025-05-14
-
-### Added
-- Enhanced test execution capabilities for GitHub Copilot Chat integration
-- Added JSON input/output format support to run_test_execution.py
-- Added automatic test template generation for Copilot suggestions
-- Improved error handling in test execution utilities
 
 ### Changed
 - Updated run_test_execution.py to support programmatic use via JSON

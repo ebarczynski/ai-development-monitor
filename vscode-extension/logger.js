@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025 Edwin Barczyński
+
 /**
  * Debug Logger for AI Development Monitor Extension
  * Provides enhanced logging capabilities with multiple log levels and categories.

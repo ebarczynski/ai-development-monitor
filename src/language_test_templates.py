@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2025 Edwin Barczyński
+
 """
 Language-Specific Test Templates for TDD
 

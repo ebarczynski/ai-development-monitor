@@ -6,7 +6,7 @@ A comprehensive system for monitoring and evaluating GitHub Copilot code suggest
 
 ## Components
 
-### 1. Python Backend (v0.6.0)
+### 1. Python Backend (v0.7.0)
 
 - **MCP Server**: Model Context Protocol server for structured AI-to-AI communication
 - **Web Interface**: Real-time visualization of communication logs
@@ -15,8 +15,9 @@ A comprehensive system for monitoring and evaluating GitHub Copilot code suggest
 - **Test Execution**: JSON-based API for executing tests on code suggestions
 - **C++23 Support**: Enhanced test generation for modern C++ features
 - **Pydantic v2 Support**: Backward compatibility with modern data validation
+- **Multiple LLM Support**: Backend compatible with both local and API-based LLMs
 
-### 2. VS Code Extension (v0.6.0)
+### 2. VS Code Extension (v0.7.0)
 
 - **Copilot Integration**: Captures and monitors GitHub Copilot suggestions
 - **Copilot Chat Integration**: Interact with GitHub Copilot Chat programmatically
@@ -24,6 +25,8 @@ A comprehensive system for monitoring and evaluating GitHub Copilot code suggest
 - **TDD Dashboard**: Visualize test execution results with GitHub Copilot integration
 - **Chat Interaction Commands**: Send "Continue" or request changes via command palette
 - **MCP Client**: Communicates with the MCP server via WebSockets
+- **Hugging Face Integration**: Connect to Hugging Face API-hosted models as alternative to Ollama
+- **Model Provider Service**: Seamlessly switch between local and cloud-hosted LLMs
 - **Evaluation UI**: Shows risk scores and recommendations in VS Code
 - **TDD Support**: Enables Test-Driven Development workflows with Copilot suggestions
 - **Dedicated Panel**: Rich visual interface for detailed evaluation results
@@ -169,7 +172,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the Apache License 2.0 - see the LICENSE file for details.
 
 ## Changelog
 
